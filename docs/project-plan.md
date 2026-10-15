@@ -88,6 +88,13 @@ GameTypes.h, CMakeLists.txt и tests/SimulationTests.cpp, чтобы не ред
 поля интерфейса с состоянием Simulation и ожидаемыми расчётами.
 Это распределение не требует новых файлов или дополнительных слоёв.
 
+Статус: участник 1 зафиксировал GameTypes и реализовал Portfolio, Simulation
+и расчётные тесты. CMake собирает portfolio_core и simulation_tests.
+MainWindow, GameStorage, main и saveLoad остаются второму участнику.
+Публичный контракт расчётов: Simulation::start/previewTrade/trade/
+confirmInitialAllocation/nextMonth/suggestedFlows/applyFlows/finishMonth/
+statistics/exportState/restoreState. Деньги — копейки int64, паи — 1e-6.
+
 Когда делить дальше:
 если одна вкладка станет слишком большой, вынести её в отдельный QWidget;
 если расчёт рынка вырастет, вынести из Simulation. Делать это по фактической сложности,

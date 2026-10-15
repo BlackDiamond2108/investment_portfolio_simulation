@@ -1,9 +1,15 @@
 <!--
-Система управления инвестиционным портфелем — упрощённый каркас
+Система управления инвестиционным портфелем
 
-18 файлов; код ещё не реализован. Все файлы содержат только комментарии.
 Стек: C++17, Qt 6 Widgets, CMake, Qt Test. Одно окно, два класса игровой логики
 (Portfolio и Simulation), класс сохранений GameStorage и общие структуры GameTypes.
+
+Реализовано (участник 1, расчёты):
+GameTypes.h, Portfolio.h/.cpp, Simulation.h/.cpp, расчётные слоты SimulationTests,
+сборка portfolio_core и simulation_tests.
+
+Ещё не реализовано (участник 2, окно и сохранения):
+main.cpp, MainWindow, GameStorage, цель приложения, слот saveLoad.
 
 Структура:
 CMakeLists.txt
@@ -22,12 +28,8 @@ src/
 tests/
   SimulationTests.cpp
 
-Начать чтение с docs/project-plan.md: там каждый файл, связи и порядок реализации.
-Затем docs/simulation-rules.md: формулы и принятые допущения.
-В исходниках подробно перечислены функции и проверки.
-Проект разрабатывают два человека. Правила совместной работы — в AGENTS.md,
-предлагаемое распределение задач — в docs/project-plan.md.
-Документация тоже внутри HTML-комментариев: открывать исходный текст, не Markdown preview.
-.ui содержит только комментарий, поэтому пока не открывается как готовая форма Designer.
-CMake также пока не содержит команд; сборка и тесты появятся при реализации.
+Правила совместной работы — AGENTS.md, распределение — docs/project-plan.md.
+Формулы — docs/simulation-rules.md.
+Сборка расчётов: cmake -S . -B build -DCMAKE_PREFIX_PATH=<Qt6>
+cmake --build build; ctest --test-dir build --output-on-failure.
 -->
