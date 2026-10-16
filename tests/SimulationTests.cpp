@@ -1,9 +1,12 @@
 /*
 Расчётные проверки Qt Test. Поведения, а не копии формул реализации.
-Проверка saveLoad оставлена для GameStorage (второй участник).
+JSON проверяется во всех фазах, включая продолжение генератора после загрузки.
 */
 
 #include "Simulation.h"
+#include "GameStorage.h"
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <QtTest>
 
@@ -506,7 +509,71 @@ void SimulationTests::fullGame()
 
 void SimulationTests::saveLoad()
 {
-    QSKIP("Проверки JSON-сохранений выполняет участник с GameStorage");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto path = dir.filePath("game.json");
+    GameConfig config = defaultConfig();
+    config.seed = std::numeric_limits<std::uint64_t>::max();
+    Simulation original;
+    QVERIFY(original.start(config).ok());
+    QVERIFY(original.trade({TradeAction::Buy, 3, 0, 0, 10}).ok());
+    QVERIFY(original.trade({TradeAction::OpenDeposit, 2, 0, 10000, 0}).ok());
+    auto roundTrip = [&]() {
+        auto save = GameStorage::save(path, original.exportState());
+        QVERIFY2(save.ok(), save.message.c_str());
+        auto loaded = GameStorage::load(path);
+        QVERIFY2(loaded.ok(), loaded.message.c_str());
+        QCOMPARE(loaded.value().config.seed, config.seed);
+        Simulation restored;
+        QVERIFY(restored.restoreState(loaded.value()).ok());
+        const auto secondPath = dir.filePath("copy.json");
+        QVERIFY(GameStorage::save(secondPath, restored.exportState()).ok());
+        QFile a(path), b(secondPath);
+        QVERIFY(a.open(QIODevice::ReadOnly)); QVERIFY(b.open(QIODevice::ReadOnly));
+        QCOMPARE(a.readAll(), b.readAll());
+        if (original.state().phase == Phase::ReadyForMonth) {
+            Simulation forward;
+            QVERIFY(forward.restoreState(original.exportState()).ok());
+            QVERIFY(forward.nextMonth().ok()); QVERIFY(restored.nextMonth().ok());
+            QCOMPARE(forward.state().randomEngineState, restored.state().randomEngineState);
+            QCOMPARE(forward.state().pending.report.profit, restored.state().pending.report.profit);
+            QCOMPARE(forward.state().market.usdRub, restored.state().market.usdRub);
+        }
+    };
+    roundTrip();
+    QVERIFY(original.confirmInitialAllocation().ok());
+    for (int i = 0; i < config.monthCount; ++i) {
+        roundTrip();
+        QVERIFY(original.nextMonth().ok()); roundTrip();
+        QVERIFY(original.applyFlows({}).ok()); roundTrip();
+        QVERIFY(original.finishMonth().ok());
+    }
+    roundTrip();
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto bytes = file.readAll(); file.close();
+    auto corrupt = [&](QJsonObject root) {
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        file.write(QJsonDocument(root).toJson()); file.close();
+        QVERIFY(!GameStorage::load(path).ok());
+    };
+    auto root = QJsonDocument::fromJson(bytes).object();
+    auto badVersion = root; badVersion["schemaVersion"] = 99; corrupt(badVersion);
+    auto state = root["state"].toObject(); state["phase"] = "unknown";
+    auto bad = root; bad["state"] = state; corrupt(bad);
+    state = root["state"].toObject(); state.remove("pending");
+    bad["state"] = state; corrupt(bad);
+    state = root["state"].toObject(); state["unitsOutstanding"] = "9223372036854775808";
+    bad["state"] = state; corrupt(bad);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    file.write("{broken"); file.close();
+    QVERIFY(!GameStorage::load(path).ok());
+    QVERIFY(!GameStorage::load(dir.filePath("absent.json")).ok());
+    QVERIFY(!GameStorage::save(dir.path(), original.exportState()).ok());
+    QVERIFY(GameStorage::save(path, original.exportState()).ok());
+    auto invalid = original.exportState(); invalid.month = 31;
+    QVERIFY(!GameStorage::save(path, invalid).ok());
+    QVERIFY(GameStorage::load(path).ok());
 }
 
 QTEST_GUILESS_MAIN(SimulationTests)

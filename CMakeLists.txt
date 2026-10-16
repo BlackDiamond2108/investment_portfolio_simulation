@@ -13,10 +13,13 @@ add_library(portfolio_core
 )
 target_include_directories(portfolio_core PUBLIC src)
 
+add_library(portfolio_storage src/GameStorage.cpp)
+target_link_libraries(portfolio_storage PUBLIC portfolio_core Qt6::Core)
+
 include(CTest)
 if(BUILD_TESTING)
     add_executable(simulation_tests tests/SimulationTests.cpp)
-    target_link_libraries(simulation_tests PRIVATE portfolio_core Qt6::Test)
+    target_link_libraries(simulation_tests PRIVATE portfolio_storage Qt6::Test)
     set_target_properties(simulation_tests PROPERTIES AUTOMOC ON)
     add_test(NAME simulation_tests COMMAND simulation_tests)
 endif()
