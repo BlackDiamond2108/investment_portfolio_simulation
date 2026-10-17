@@ -19,10 +19,14 @@ target_link_libraries(portfolio_storage PUBLIC portfolio_core Qt6::Core)
 include(CTest)
 if(BUILD_TESTING)
     add_executable(simulation_tests tests/SimulationTests.cpp)
-    target_link_libraries(simulation_tests PRIVATE portfolio_storage Qt6::Test)
+    target_link_libraries(simulation_tests PRIVATE portfolio_ui Qt6::Test)
     set_target_properties(simulation_tests PROPERTIES AUTOMOC ON)
     add_test(NAME simulation_tests COMMAND simulation_tests)
+    set_tests_properties(simulation_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
 endif()
 
-# Цели portfolio_storage и portfolio_simulator подключаются, когда
-# GameStorage, MainWindow и main будут реализованы вторым участником.
+add_library(portfolio_ui src/MainWindow.cpp src/MainWindow.h src/MainWindow.ui)
+target_link_libraries(portfolio_ui PUBLIC portfolio_storage Qt6::Widgets)
+set_target_properties(portfolio_ui PROPERTIES AUTOMOC ON AUTOUIC ON)
+add_executable(portfolio_simulator src/main.cpp)
+target_link_libraries(portfolio_simulator PRIVATE portfolio_ui)

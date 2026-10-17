@@ -5,6 +5,14 @@ JSON проверяется во всех фазах, включая продо�
 
 #include "Simulation.h"
 #include "GameStorage.h"
+#include "MainWindow.h"
+#include <QPushButton>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QSpinBox>
+#include <QTableWidget>
+#include <QTabWidget>
+#include <QLabel>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -77,6 +85,7 @@ private slots:
     void market();
     void fullGame();
     void saveLoad();
+    void windowGame();
 };
 
 void SimulationTests::configBounds()
@@ -576,5 +585,53 @@ void SimulationTests::saveLoad()
     QVERIFY(GameStorage::load(path).ok());
 }
 
-QTEST_GUILESS_MAIN(SimulationTests)
+void SimulationTests::windowGame()
+{
+    for (int mode = 0; mode < 2; ++mode) {
+        MainWindow window;
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto button = [&](const char* name) { return window.findChild<QPushButton*>(name); };
+        auto* tabs = window.findChild<QTabWidget*>("tabs");
+        auto* months = window.findChild<QSpinBox*>("months");
+        auto* modeBox = window.findChild<QComboBox*>("flowMode");
+        QVERIFY(tabs && months && modeBox);
+        const int count = mode == 0 ? 12 : 30;
+        months->setValue(count); modeBox->setCurrentIndex(mode);
+        QVERIFY(button("newGameButton"));
+        button("newGameButton")->click();
+        QCOMPARE(tabs->currentIndex(), 2);
+        auto* value = window.findChild<QDoubleSpinBox*>("tradeValue");
+        QVERIFY(value); value->setValue(10);
+        QVERIFY(button("tradeButton")->isEnabled());
+        button("tradeButton")->click();
+        auto* positions = window.findChild<QTableWidget*>("portfolioTable");
+        QVERIFY(positions); QCOMPARE(positions->rowCount(), 1);
+        button("initialButton")->click();
+        QVERIFY(button("nextButton")->isEnabled());
+        QVERIFY(!button("tradeButton")->isEnabled());
+        for (int month = 1; month <= count; ++month) {
+            button("nextButton")->click();
+            QVERIFY(!button("nextButton")->isEnabled());
+            QVERIFY(button("flowsButton")->isEnabled());
+            auto* inflow = window.findChild<QDoubleSpinBox*>("inflow");
+            QCOMPARE(inflow->isEnabled(), mode == 0);
+            if (mode == 0 && month == 1) inflow->setValue(1000);
+            button("flowsButton")->click();
+            QVERIFY(!button("flowsButton")->isEnabled());
+            QVERIFY(button("finishButton")->isEnabled());
+            button("finishButton")->click();
+            QCOMPARE(window.findChild<QTableWidget*>("historyTable")->rowCount(), month);
+        }
+        QCOMPARE(tabs->currentIndex(), 3);
+        QVERIFY(!button("nextButton")->isEnabled());
+        QVERIFY(!button("finishButton")->isEnabled());
+        QVERIFY(window.findChild<QLabel*>("phaseLabel")->text().contains("Партия завершена"));
+        QApplication::processEvents();
+        if (mode == 0 && !qEnvironmentVariableIsEmpty("PORTFOLIO_SCREENSHOT"))
+            QVERIFY(window.grab().save(qEnvironmentVariable("PORTFOLIO_SCREENSHOT")));
+    }
+}
+
+QTEST_MAIN(SimulationTests)
 #include "SimulationTests.moc"
