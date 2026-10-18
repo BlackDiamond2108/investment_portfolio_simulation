@@ -148,11 +148,11 @@ void MainWindow::buildPages()
     auto* columns = new QHBoxLayout;
     auto* general = new QGroupBox("Параметры фонда"); auto* g = new QFormLayout(general);
     months_ = new QSpinBox; months_->setObjectName("months"); months_->setRange(12,30);
-    capital_ = number("capital", 1000, 1e12); capital_->setSingleStep(1000);
+    capital_ = number("capital", 0.01, 1e12); capital_->setSingleStep(1000);
     tax_ = number("tax", 0,100); seed_ = new QLineEdit; seed_->setObjectName("seed");
     seed_->setValidator(new QRegularExpressionValidator(QRegularExpression("[0-9]{1,20}"), seed_));
     flowMode_ = new QComboBox; flowMode_->setObjectName("flowMode"); flowMode_->addItems({"Ручные потоки", "Автоматические потоки"});
-    g->addRow("Месяцев", months_); g->addRow("Капитал, RUB (шаг 1000)", capital_);
+    g->addRow("Месяцев", months_); g->addRow("Капитал, RUB", capital_);
     g->addRow("Налог на прибыль, %", tax_); g->addRow("Seed — повторяемость", seed_); g->addRow("Паи", flowMode_);
     columns->addWidget(general);
     auto* fx = new QGroupBox("Валюты и спрос на паи"); auto* x = new QFormLayout(fx);

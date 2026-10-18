@@ -118,9 +118,10 @@ Result<void> Simulation::validateConfig(const GameConfig& config)
     if (config.initialCapital <= 0) {
         return Result<void>::failure("invalid_config", "Начальный капитал должен быть положительным");
     }
-    if (config.initialCapital < kInitialUnitPrice || config.initialCapital % kInitialUnitPrice != 0) {
-        return Result<void>::failure("invalid_config", "Капитал должен быть кратен начальной цене пая 1000 RUB");
-    }
+    if (!floorUnitsFromMoney(config.initialCapital, kInitialUnitPrice).ok())
+        return Result<void>::failure("invalid_config", "Начальный капитал слишком велик для количества паёв");
+    if (config.flowMode != FlowMode::Manual && config.flowMode != FlowMode::Automatic)
+        return Result<void>::failure("invalid_config", "Неизвестный режим потоков");
     if (!std::isfinite(config.taxRate) || config.taxRate < 0.0 || config.taxRate > 1.0) {
         return Result<void>::failure("invalid_config", "Ставка налога должна быть конечной долей от 0 до 1");
     }
@@ -167,9 +168,15 @@ Result<void> Simulation::validateConfig(const GameConfig& config)
             || !std::isfinite(instrument.rateChangeMax)) {
             return Result<void>::failure("invalid_config", "Ставки и диапазоны должны быть конечными числами");
         }
+        if (instrument.currency < Currency::RUB || instrument.currency > Currency::EUR
+            || instrument.kind < InstrumentKind::Deposit || instrument.kind > InstrumentKind::Metal
+            || instrument.accruedCoupon < 0)
+            return Result<void>::failure("invalid_config", "Некорректный тип, валюта или купон инструмента");
+        if (instrument.rateChangeMin > instrument.rateChangeMax)
+            return Result<void>::failure("invalid_config", "Нижняя граница изменения ставки больше верхней");
         switch (instrument.kind) {
         case InstrumentKind::Deposit:
-            if (instrument.termMonths <= 0 || instrument.annualRate < 0.0
+            if (instrument.termMonths <= 0 || instrument.termMonths > 1200 || instrument.annualRate < 0.0
                 || instrument.minRate < 0.0 || instrument.maxRate < instrument.minRate) {
                 return Result<void>::failure("invalid_config", "Некорректные параметры вклада");
             }
@@ -181,7 +188,8 @@ Result<void> Simulation::validateConfig(const GameConfig& config)
             break;
         case InstrumentKind::Bond:
             if (instrument.faceValue <= 0 || instrument.couponPeriodMonths <= 0
-                || instrument.maturityMonth <= 0 || instrument.annualRate < 0.0) {
+                || instrument.maturityMonth <= 0 || instrument.maturityMonth > 1200
+                || instrument.couponPeriodMonths > 1200 || instrument.annualRate < 0.0) {
                 return Result<void>::failure("invalid_config", "Некорректные параметры облигации");
             }
             hasBond = true;
@@ -231,9 +239,10 @@ Result<void> Simulation::start(const GameConfig& config)
     next.market.usdRub = config.usdRub;
     next.market.eurRub = config.eurRub;
     next.portfolio.cashRUB = config.initialCapital;
-    next.unitsOutstanding = (config.initialCapital / kInitialUnitPrice) * kUnitScale;
+    next.unitsOutstanding = floorUnitsFromMoney(config.initialCapital, kInitialUnitPrice).value();
     next.nextPositionId = 1;
     next.started = true;
+    next.startingNav = config.initialCapital;
     next.returnIndex = 1.0;
     next.returnIndexPeak = 1.0;
     next.journal.push_back("Создана новая партия");
@@ -307,6 +316,7 @@ void Simulation::finishGame(GameState& state, const std::string& reason) const
     state.phase = Phase::Finished;
     state.finishReason = reason;
     state.journal.push_back(reason);
+    finalizeReport(state);
 }
 
 Result<void> Simulation::checkSolvency(GameState& state, bool finishingMonth) const
@@ -315,18 +325,21 @@ Result<void> Simulation::checkSolvency(GameState& state, bool finishingMonth) co
     if (!nav.ok()) {
         return Result<void>::failure(nav.code, nav.message);
     }
-    if (nav.value() <= 0) {
-        finishGame(state, "Банкротство: стоимость чистых активов неположительна");
+    if (state.unitsOutstanding <= 0 && !hasDebts(state)) {
+        finishGame(state, "Фонд закрыт: все паи погашены");
         return Result<void>::success();
     }
-    if (state.unitsOutstanding <= 0) {
-        finishGame(state, "Фонд закрыт: все паи погашены");
+    // При возврате всех паёв разрешаем продать активы для расчёта с пайщиками.
+    if (state.unitsOutstanding > 0 && nav.value() <= 0) {
+        finishGame(state, "Банкротство: стоимость чистых активов неположительна");
         return Result<void>::success();
     }
     if (!hasDebts(state)) {
         return Result<void>::success();
     }
-    const Money debts = state.taxLiability + state.shareholderLiability;
+    Money debts = 0;
+    if (!checkedAdd(state.taxLiability, state.shareholderLiability, debts))
+        return Result<void>::failure("overflow", "Переполнение обязательств");
     const Money liquid = liquidAssets(state);
     if (liquid < debts) {
         finishGame(state, "Неплатёжеспособность: недостаточно ликвидных активов для обязательств");
@@ -373,7 +386,9 @@ Result<TradePreview> Simulation::previewTrade(const TradeRequest& request) const
     if (!applied.ok()) {
         return Result<TradePreview>::failure(applied.code, applied.message);
     }
-    return Portfolio::previewTrade(state_.portfolio, state_.market, request);
+    auto preview = Portfolio::previewTrade(state_.portfolio, state_.market, request);
+    if (preview.ok()) preview.data->cashAfter = copy.portfolio.cashRUB;
+    return preview;
 }
 
 Result<void> Simulation::trade(const TradeRequest& request)
@@ -410,31 +425,31 @@ double Simulation::clampValue(double value, double low, double high)
     return std::max(low, std::min(high, value));
 }
 
-Money Simulation::applyPriceShock(Money price, double shock)
+Result<Money> Simulation::applyPriceShock(Money price, double shock)
 {
-    const long double next = static_cast<long double>(price) * (1.0L + static_cast<long double>(shock));
-    Money rounded = static_cast<Money>(std::llround(next));
-    if (rounded < 1) {
-        rounded = 1;
-    }
-    return rounded;
+    auto next = roundRateMoney(price, 1.0 + shock);
+    if (!next.ok()) return next;
+    return Result<Money>::success(std::max<Money>(1, next.value()));
 }
 
 Result<void> Simulation::updateMarket(MarketState& market, std::mt19937_64& rng, const GameConfig& config) const
 {
-    auto applyFx = [&](Money& rate, double minChange, double maxChange) {
-        if (minChange == 0.0 && maxChange == 0.0) {
-            return;
-        }
+    auto applyFx = [&](Money& rate, double minChange, double maxChange) -> Result<void> {
+        if (minChange == 0.0 && maxChange == 0.0) return Result<void>::success();
         double shock = minChange;
         if (minChange != maxChange) {
             std::uniform_real_distribution<double> dist(minChange, maxChange);
             shock = dist(rng);
         }
-        rate = applyPriceShock(rate, shock);
+        const auto changed = applyPriceShock(rate, shock);
+        if (!changed.ok()) return Result<void>::failure(changed.code, changed.message);
+        rate = changed.value();
+        return Result<void>::success();
     };
-    applyFx(market.usdRub, config.usdMinChange, config.usdMaxChange);
-    applyFx(market.eurRub, config.eurMinChange, config.eurMaxChange);
+    const auto usd = applyFx(market.usdRub, config.usdMinChange, config.usdMaxChange);
+    if (!usd.ok()) return usd;
+    const auto eur = applyFx(market.eurRub, config.eurMinChange, config.eurMaxChange);
+    if (!eur.ok()) return eur;
 
     std::sort(market.instruments.begin(), market.instruments.end(),
         [](const Instrument& a, const Instrument& b) { return a.id < b.id; });
@@ -449,7 +464,9 @@ Result<void> Simulation::updateMarket(MarketState& market, std::mt19937_64& rng,
                 std::uniform_real_distribution<double> dist(instrument.minChange, instrument.maxChange);
                 shock = dist(rng);
             }
-            instrument.price = applyPriceShock(instrument.price, shock);
+            const auto changed = applyPriceShock(instrument.price, shock);
+            if (!changed.ok()) return Result<void>::failure(changed.code, changed.message);
+            instrument.price = changed.value();
         } else if (instrument.kind == InstrumentKind::Deposit) {
             if (instrument.rateChangeMin == 0.0 && instrument.rateChangeMax == 0.0) {
                 continue;
@@ -486,7 +503,9 @@ Result<void> Simulation::updateBondQuotes(MarketState& market, int month) const
         if (couponDue) {
             instrument.accruedCoupon = 0;
         } else if (instrument.couponPeriodMonths > 0) {
-            instrument.accruedCoupon = monthly.value() * (month % instrument.couponPeriodMonths);
+            const auto coupon = mulDivRound(monthly.value(), month % instrument.couponPeriodMonths, 1);
+            if (!coupon.ok()) return Result<void>::failure(coupon.code, coupon.message);
+            instrument.accruedCoupon = coupon.value();
         }
     }
     return Result<void>::success();
@@ -640,8 +659,9 @@ Result<void> Simulation::nextMonthOn(GameState& state, std::mt19937_64& rng) con
         report.returnNet = static_cast<double>(report.netProfit) / static_cast<double>(report.navStart);
     }
     if (state.unitsOutstanding > 0 && navAfterTax.value() > 0) {
-        report.unitPrice = static_cast<Money>(
-            (static_cast<__int128>(navAfterTax.value()) * kUnitScale) / state.unitsOutstanding);
+        const auto price = mulDivFloor(navAfterTax.value(), kUnitScale, state.unitsOutstanding);
+        if (!price.ok()) return Result<void>::failure(price.code, price.message);
+        report.unitPrice = price.value();
     }
     report.income = calculateIncome(
         beforePositions, beforeMarket, state.portfolio, state.market, accrual.value());
@@ -703,6 +723,10 @@ Result<void> Simulation::applyFlowsOn(GameState& state, const FlowRequest& reque
     if (state.pending.flowsApplied) {
         return Result<void>::failure("flows_already_applied", "Потоки этого месяца уже применены");
     }
+    if (state.config.flowMode == FlowMode::Automatic
+        && (request.inflowRub != state.pending.suggested.inflowRub
+            || request.unitsToRedeem != state.pending.suggested.unitsToRedeem))
+        return Result<void>::failure("invalid_request", "В автоматическом режиме нужно подтвердить рассчитанные потоки");
     if (request.inflowRub < 0 || request.unitsToRedeem < 0) {
         return Result<void>::failure("invalid_request", "Поступление и возврат паёв не могут быть отрицательными");
     }
@@ -713,12 +737,17 @@ Result<void> Simulation::applyFlowsOn(GameState& state, const FlowRequest& reque
         return Result<void>::success();
     }
 
-    const Quantity issued = floorUnitsFromMoney(request.inflowRub, report.unitPrice);
-    const Money accepted = moneyFromUnits(issued, report.unitPrice);
+    const auto issueResult = floorUnitsFromMoney(request.inflowRub, report.unitPrice);
+    if (!issueResult.ok()) return Result<void>::failure(issueResult.code, issueResult.message);
+    const Quantity issued = issueResult.value();
+    const auto acceptedResult = moneyFromUnits(issued, report.unitPrice);
+    if (!acceptedResult.ok()) return Result<void>::failure(acceptedResult.code, acceptedResult.message);
+    const Money accepted = acceptedResult.value();
     if (!checkedAdd(state.portfolio.cashRUB, accepted, state.portfolio.cashRUB)) {
         return Result<void>::failure("overflow", "Переполнение при поступлении средств");
     }
-    state.unitsOutstanding += issued;
+    if (!checkedAdd(state.unitsOutstanding, issued, state.unitsOutstanding))
+        return Result<void>::failure("overflow", "Переполнение количества паёв");
     report.unitsIssued = issued;
     report.acceptedInflow = accepted;
     report.leftoverInflow = request.inflowRub - accepted;
@@ -727,11 +756,15 @@ Result<void> Simulation::applyFlowsOn(GameState& state, const FlowRequest& reque
     if (redeem > state.unitsOutstanding) {
         return Result<void>::failure("invalid_request", "Нельзя вернуть больше паёв, чем выпущено");
     }
-    const Money redemptionValue = moneyFromUnits(redeem, report.unitPrice);
+    const auto redemption = moneyFromUnits(redeem, report.unitPrice);
+    if (!redemption.ok()) return Result<void>::failure(redemption.code, redemption.message);
+    const Money redemptionValue = redemption.value();
     if (state.portfolio.cashRUB >= redemptionValue) {
         state.portfolio.cashRUB -= redemptionValue;
     } else {
-        state.shareholderLiability += redemptionValue - state.portfolio.cashRUB;
+        if (!checkedAdd(state.shareholderLiability, redemptionValue - state.portfolio.cashRUB,
+                        state.shareholderLiability))
+            return Result<void>::failure("overflow", "Переполнение долга пайщикам");
         state.portfolio.cashRUB = 0;
     }
     state.unitsOutstanding -= redeem;
@@ -747,8 +780,9 @@ Result<void> Simulation::applyFlowsOn(GameState& state, const FlowRequest& reque
     state.phase = Phase::Restructuring;
     state.journal.push_back("Потоки месяца применены");
 
+    settleLiabilities(state);
     if (state.unitsOutstanding <= 0) {
-        finishGame(state, "Фонд закрыт: все паи погашены");
+        return checkSolvency(state, false);
     } else if (navEnd.value() <= 0) {
         finishGame(state, "Банкротство после потоков");
     }
@@ -766,18 +800,9 @@ Result<void> Simulation::applyFlows(const FlowRequest& request)
     return Result<void>::success();
 }
 
-Result<void> Simulation::finishMonthOn(GameState& state) const
+void Simulation::finalizeReport(GameState& state) const
 {
-    if (!state.started || state.phase != Phase::Restructuring || !state.pending.flowsApplied) {
-        return Result<void>::failure("invalid_phase", "Месяц можно закрыть только после потоков в реструктуризации");
-    }
-
-    settleLiabilities(state);
-    const auto solvency = checkSolvency(state, true);
-    if (!solvency.ok()) {
-        return solvency;
-    }
-
+    if (state.pending.report.month == 0) return;
     MonthReport report = state.pending.report;
     const auto navEnd = navOf(state);
     if (navEnd.ok()) {
@@ -795,6 +820,21 @@ Result<void> Simulation::finishMonthOn(GameState& state) const
     }
     state.history.push_back(report);
     state.pending = PendingMonth{};
+}
+
+Result<void> Simulation::finishMonthOn(GameState& state) const
+{
+    if (!state.started || state.phase != Phase::Restructuring || !state.pending.flowsApplied) {
+        return Result<void>::failure("invalid_phase", "Месяц можно закрыть только после потоков в реструктуризации");
+    }
+
+    settleLiabilities(state);
+    const auto solvency = checkSolvency(state, true);
+    if (!solvency.ok()) {
+        return solvency;
+    }
+
+    finalizeReport(state);
     if (state.phase != Phase::Finished) {
         if (state.month >= state.config.monthCount) {
             finishGame(state, "Партия завершена после M месяцев");
@@ -852,35 +892,126 @@ Result<std::mt19937_64> Simulation::restoreRandomState(const std::string& serial
     if (!in) {
         return Result<std::mt19937_64>::failure("invalid_state", "Не удалось прочитать состояние генератора");
     }
+    in >> std::ws;
+    if (!in.eof()) return Result<std::mt19937_64>::failure("invalid_state", "Лишние данные в состоянии генератора");
     return Result<std::mt19937_64>::success(rng);
 }
 
-Result<void> Simulation::validateState(const GameState& candidate)
+Result<void> Simulation::validateState(const GameState& c)
 {
-    if (!candidate.started) {
-        return Result<void>::failure("invalid_state", "Состояние не содержит начатой партии");
+    auto bad = [](const std::string& reason) { return Result<void>::failure("invalid_state", reason); };
+    if (!c.started) return bad("Состояние не содержит начатой партии");
+    const auto config = validateConfig(c.config);
+    if (!config.ok()) return config;
+    if (c.month < 0 || c.month > c.config.monthCount || c.unitsOutstanding < 0
+        || c.taxLiability < 0 || c.shareholderLiability < 0 || c.startingNav <= 0)
+        return bad("Некорректный месяц, капитал, паи или обязательства");
+    if (c.phase < Phase::InitialAllocation || c.phase > Phase::Finished)
+        return bad("Неизвестная фаза партии");
+    GameConfig current = c.config;
+    current.instruments = c.market.instruments;
+    current.usdRub = c.market.usdRub; current.eurRub = c.market.eurRub;
+    const auto market = validateConfig(current);
+    if (!market.ok()) return market;
+    if (c.market.instruments.size() != c.config.instruments.size())
+        return bad("Рынок не соответствует исходному каталогу");
+    for (const auto& i : c.market.instruments) {
+        auto original = std::find_if(c.config.instruments.begin(), c.config.instruments.end(),
+            [&](const Instrument& value) { return value.id == i.id; });
+        if (original == c.config.instruments.end() || original->kind != i.kind || original->currency != i.currency
+            || original->name != i.name || original->faceValue != i.faceValue
+            || original->termMonths != i.termMonths || original->maturityMonth != i.maturityMonth
+            || original->couponPeriodMonths != i.couponPeriodMonths
+            || original->minChange != i.minChange || original->maxChange != i.maxChange
+            || original->minRate != i.minRate || original->maxRate != i.maxRate
+            || original->rateChangeMin != i.rateChangeMin || original->rateChangeMax != i.rateChangeMax
+            || (i.kind != InstrumentKind::Deposit && original->annualRate != i.annualRate))
+            return bad("Изменены фиксированные условия инструмента");
+        if (i.kind == InstrumentKind::Bond && i.maturityMonth <= c.month && i.tradable)
+            return bad("Погашенная облигация не может быть доступна для покупки");
     }
-    const auto configOk = validateConfig(candidate.config);
-    if (!configOk.ok()) {
-        return configOk;
+    const auto portfolio = Portfolio::validate(c.portfolio, c.market);
+    if (!portfolio.ok()) return portfolio;
+    PositionId maxId = 0;
+    for (const auto& p : c.portfolio.positions) {
+        maxId = std::max(maxId, p.id);
+        const auto* i = Portfolio::findInstrument(c.market, p.instrumentId);
+        if (p.openMonth < 0 || p.openMonth > c.month) return bad("Некорректный месяц открытия позиции");
+        if (i->kind == InstrumentKind::Deposit
+            && (p.quantity != 1 || p.maturityMonth <= c.month
+                || p.maturityMonth != p.openMonth + i->termMonths))
+            return bad("Некорректный срок или количество вклада");
+        if (i->kind == InstrumentKind::Bond
+            && (i->maturityMonth <= c.month || p.accruedCoupon != i->accruedCoupon))
+            return bad("Некорректное состояние облигации");
     }
-    const auto portfolioOk = Portfolio::validate(candidate.portfolio, candidate.market);
-    if (!portfolioOk.ok()) {
-        return portfolioOk;
+    if (c.nextPositionId <= maxId || c.nextPositionId <= 0)
+        return bad("Следующий ID позиции уже занят");
+    const auto assets = Portfolio::assetsValue(c.portfolio, c.market);
+    Money nav = 0;
+    if (!assets.ok() || !checkedSub(assets.value(), c.taxLiability, nav)
+        || !checkedSub(nav, c.shareholderLiability, nav)) return bad("Переполнение оценки фонда");
+    if (c.phase != Phase::Finished && c.phase != Phase::Restructuring && (nav <= 0 || c.unitsOutstanding <= 0))
+        return bad("Активная партия должна иметь положительный капитал и паи");
+    const bool pending = c.phase == Phase::AwaitingFlows || c.phase == Phase::Restructuring;
+    if (c.history.size() != static_cast<std::size_t>(c.month - (pending ? 1 : 0)))
+        return bad("История не соответствует месяцу и фазе");
+    if (pending) {
+        if (c.month == 0 || c.pending.report.month != c.month
+            || c.pending.flowsApplied != (c.phase == Phase::Restructuring))
+            return bad("Неверная фаза промежуточного отчёта");
+        if (c.pending.suggested.inflowRub < 0 || c.pending.suggested.unitsToRedeem < 0)
+            return bad("Отрицательное предложение потоков");
+        if (c.phase == Phase::AwaitingFlows
+            && (c.pending.report.acceptedInflow || c.pending.report.redemptionValue
+                || c.pending.report.unitsIssued || c.pending.report.unitsRedeemed))
+            return bad("Потоки уже учтены до подтверждения");
+    } else if (c.pending.report.month != 0 || c.pending.flowsApplied) return bad("Лишний промежуточный месяц");
+    if ((c.phase == Phase::InitialAllocation && c.month != 0)
+        || (c.phase == Phase::ReadyForMonth && (c.month >= c.config.monthCount || c.taxLiability || c.shareholderLiability))
+        || (c.phase == Phase::Finished && c.finishReason.empty())
+        || (c.phase != Phase::Finished && !c.finishReason.empty()))
+        return bad("Фаза и причина завершения противоречат состоянию");
+
+    auto near = [](double a, double b) { return std::isfinite(a) && std::abs(a-b) <= 1e-10 * std::max(1.0, std::abs(b)); };
+    auto reportOk = [&](const MonthReport& report) {
+        if (report.navStart <= 0 || report.tax < 0 || report.acceptedInflow < 0 || report.leftoverInflow < 0
+            || report.unitsIssued < 0 || report.unitsRedeemed < 0 || report.redemptionValue < 0 || report.unitPrice < 0)
+            return false;
+        if (static_cast<__int128>(report.navStart) + report.profit != report.navAfterIncome
+            || static_cast<__int128>(report.profit) - report.tax != report.netProfit
+            || static_cast<__int128>(report.navAfterIncome) - report.tax != report.navAfterTax)
+            return false;
+        auto tax = roundRateMoney(std::max<Money>(0, report.profit), c.config.taxRate);
+        if (!tax.ok() || tax.value() != report.tax || !report.returnDefined
+            || !near(report.returnGross, static_cast<double>(report.profit)/report.navStart)
+            || !near(report.returnNet, static_cast<double>(report.netProfit)/report.navStart)) return false;
+        __int128 income = 0;
+        for (const auto& row : report.income) {
+            if (static_cast<__int128>(row.interestIncome) + row.revaluation != row.total) return false;
+            if (row.instrumentId != 0 && !Portfolio::findInstrument(c.market, row.instrumentId)) return false;
+            income += row.total;
+        }
+        return income == report.profit;
+    };
+    Money previousNav = c.startingNav;
+    int month = 0;
+    double index = 1, peak = 1, drawdown = 0;
+    for (const auto& report : c.history) {
+        if (report.month != ++month || report.navStart != previousNav || !reportOk(report))
+            return bad("Нарушена последовательность или арифметика отчётов");
+        previousNav = report.navEnd;
+        index *= 1 + report.returnNet; peak = std::max(peak, index);
+        drawdown = std::max(drawdown, 1 - index/peak);
     }
-    if (candidate.month < 0 || candidate.month > candidate.config.monthCount) {
-        return Result<void>::failure("invalid_state", "Номер месяца вне допустимого диапазона");
-    }
-    if (candidate.unitsOutstanding < 0 || candidate.taxLiability < 0 || candidate.shareholderLiability < 0) {
-        return Result<void>::failure("invalid_state", "Отрицательные паи или обязательства");
-    }
-    if (static_cast<int>(candidate.history.size()) > candidate.config.monthCount) {
-        return Result<void>::failure("invalid_state", "Слишком много месячных отчётов");
-    }
-    const auto rng = restoreRandomState(candidate.randomEngineState);
-    if (!rng.ok()) {
-        return Result<void>::failure(rng.code, rng.message);
-    }
+    if (pending && (c.pending.report.navStart != previousNav || !reportOk(c.pending.report)))
+        return bad("Неверный расчёт промежуточного месяца");
+    if (!pending && c.phase != Phase::InitialAllocation && previousNav != nav)
+        return bad("Капитал не совпадает с последним отчётом");
+    if (!near(c.returnIndex, index) || !near(c.returnIndexPeak, peak) || !near(c.maxDrawdown, drawdown))
+        return bad("Статистика не соответствует истории");
+    const auto rng = restoreRandomState(c.randomEngineState);
+    if (!rng.ok()) return bad(rng.message);
     return Result<void>::success();
 }
 

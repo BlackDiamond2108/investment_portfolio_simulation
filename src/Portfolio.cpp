@@ -205,7 +205,8 @@ Result<TradePreview> Portfolio::previewSell(
 
     TradePreview preview;
     preview.cashDeltaRub = value.value();
-    preview.cashAfter = portfolio.cashRUB + value.value();
+    if (!checkedAdd(portfolio.cashRUB, value.value(), preview.cashAfter))
+        return Result<TradePreview>::failure("overflow", "Переполнение остатка после продажи");
     preview.positionValueRub = value.value();
     preview.description = "Продажа " + instrument->name;
     return Result<TradePreview>::success(preview);
@@ -272,7 +273,7 @@ Result<void> Portfolio::applyBuy(
     const TradeRequest& request,
     int month)
 {
-    (void)month;
+
     const auto preview = previewBuy(portfolio, market, request);
     if (!preview.ok()) {
         return Result<void>::failure(preview.code, preview.message);
@@ -280,6 +281,7 @@ Result<void> Portfolio::applyBuy(
     const Instrument* instrument = findInstrument(market, request.instrumentId);
     Position position;
     position.id = nextPositionId++;
+    position.openMonth = month;
     position.instrumentId = instrument->id;
     position.quantity = request.quantity;
     position.costBasisRub = -preview.value().cashDeltaRub;
@@ -338,6 +340,7 @@ Result<void> Portfolio::applyOpenDeposit(
 
     Position position;
     position.id = nextPositionId++;
+    position.openMonth = month;
     position.instrumentId = instrument->id;
     position.quantity = 1;
     position.costBasisRub = -preview.value().cashDeltaRub;
@@ -358,6 +361,8 @@ Result<void> Portfolio::executeTrade(
     const TradeRequest& request,
     int month)
 {
+    if (nextPositionId <= 0 || nextPositionId == std::numeric_limits<PositionId>::max())
+        return Result<void>::failure("overflow", "Исчерпаны идентификаторы позиций");
     PortfolioData copy = portfolio;
     PositionId nextId = nextPositionId;
     Result<void> applied = Result<void>::failure("invalid_request", "Неизвестное действие сделки");
@@ -381,10 +386,11 @@ Result<void> Portfolio::executeTrade(
 }
 
 Result<AccrualReport> Portfolio::accrueAndRedeem(
-    PortfolioData& portfolio,
+    PortfolioData& target,
     const MarketState& market,
     int month)
 {
+    PortfolioData portfolio = target;
     AccrualReport report;
     std::vector<Position> remaining;
     remaining.reserve(portfolio.positions.size());
@@ -454,7 +460,9 @@ Result<AccrualReport> Portfolio::accrueAndRedeem(
             if (couponDue) {
                 monthsInPeriod = instrument->couponPeriodMonths;
             }
-            position.accruedCoupon = monthly.value() * static_cast<Money>(monthsInPeriod);
+            const auto accrued = mulDivRound(monthly.value(), monthsInPeriod, 1);
+            if (!accrued.ok()) return Result<AccrualReport>::failure(accrued.code, accrued.message);
+            position.accruedCoupon = accrued.value();
 
             if (couponDue || matured) {
                 const auto couponNative = mulDivRound(position.accruedCoupon, position.quantity, 1);
@@ -494,6 +502,7 @@ Result<AccrualReport> Portfolio::accrueAndRedeem(
     }
 
     portfolio.positions = std::move(remaining);
+    target = std::move(portfolio);
     return Result<AccrualReport>::success(report);
 }
 
@@ -502,6 +511,8 @@ Result<void> Portfolio::validate(const PortfolioData& portfolio, const MarketSta
     if (portfolio.cashRUB < 0) {
         return Result<void>::failure("invalid_state", "Отрицательный остаток денег");
     }
+    if (market.usdRub <= 0 || market.eurRub <= 0)
+        return Result<void>::failure("invalid_state", "Некорректные курсы валют");
     std::vector<PositionId> ids;
     ids.reserve(portfolio.positions.size());
     for (const Position& position : portfolio.positions) {
@@ -516,6 +527,9 @@ Result<void> Portfolio::validate(const PortfolioData& portfolio, const MarketSta
         if (instrument == nullptr) {
             return Result<void>::failure("invalid_state", "Позиция ссылается на неизвестный инструмент");
         }
+        if (position.costBasisRub < 0 || position.principal < 0 || position.accruedInterest < 0
+            || position.accruedCoupon < 0 || !std::isfinite(position.lockedRate) || position.lockedRate < 0)
+            return Result<void>::failure("invalid_state", "Отрицательные суммы или неверная ставка позиции");
         if (position.quantity <= 0) {
             return Result<void>::failure("invalid_state", "Количество в позиции должно быть положительным");
         }

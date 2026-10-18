@@ -58,6 +58,7 @@ private:
     void settleLiabilities(GameState& state) const;
     Money liquidAssets(const GameState& state) const;
     Result<void> checkSolvency(GameState& state, bool finishingMonth) const;
+    void finalizeReport(GameState& state) const;
     void finishGame(GameState& state, const std::string& reason) const;
     Result<Money> navOf(const GameState& state) const;
     bool canBuy(const GameState& state) const;
@@ -66,7 +67,7 @@ private:
     static std::string serializeRandomState(const std::mt19937_64& rng);
     static Result<std::mt19937_64> restoreRandomState(const std::string& serialized);
     static double clampValue(double value, double low, double high);
-    static Money applyPriceShock(Money price, double shock);
+    static Result<Money> applyPriceShock(Money price, double shock);
 
     GameState state_;
     std::mt19937_64 rng_;

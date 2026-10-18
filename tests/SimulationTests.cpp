@@ -86,6 +86,11 @@ private slots:
     void fullGame();
     void saveLoad();
     void windowGame();
+    void terminalReports();
+    void invalidRestores();
+    void overflowAndAtomicity();
+    void automaticFlowsContract();
+    void bondAndCurrencyIncome();
 };
 
 void SimulationTests::configBounds()
@@ -112,7 +117,7 @@ void SimulationTests::configBounds()
 
     GameConfig notMultiple = defaultConfig();
     notMultiple.initialCapital = 1500 * kKopecksPerRuble;
-    QCOMPARE(Simulation::validateConfig(notMultiple).ok(), false);
+    QCOMPARE(Simulation::validateConfig(notMultiple).ok(), true);
 
     GameConfig badTax = defaultConfig();
     badTax.taxRate = std::numeric_limits<double>::quiet_NaN();
@@ -583,6 +588,171 @@ void SimulationTests::saveLoad()
     auto invalid = original.exportState(); invalid.month = 31;
     QVERIFY(!GameStorage::save(path, invalid).ok());
     QVERIFY(GameStorage::load(path).ok());
+}
+
+void SimulationTests::terminalReports()
+{
+    QTemporaryDir dir;
+    auto config = defaultConfig(); silenceMarket(config); config.taxRate = 0;
+    config.initialCapital = 150050; // Не требуется целое число паёв или кратность 1000 RUB.
+    Simulation cash;
+    QVERIFY(cash.start(config).ok());
+    QCOMPARE(cash.state().unitsOutstanding, Quantity(1500500));
+    QVERIFY(cash.confirmInitialAllocation().ok()); QVERIFY(cash.nextMonth().ok());
+    QVERIFY(cash.applyFlows({0, cash.state().unitsOutstanding}).ok());
+    QCOMPARE(cash.state().phase, Phase::Finished);
+    QCOMPARE(cash.state().history.size(), std::size_t(1));
+    QCOMPARE(cash.statistics().totalRedemption, config.initialCapital);
+    QCOMPARE(cash.statistics().finalNav, Money(0));
+    QVERIFY(GameStorage::save(dir.filePath("closed.json"), cash.exportState()).ok());
+    QVERIFY(GameStorage::load(dir.filePath("closed.json")).ok());
+
+    config = defaultConfig(); silenceMarket(config); config.taxRate = 0;
+    config.initialCapital = 10000 * kKopecksPerRuble;
+    Simulation stocks;
+    QVERIFY(stocks.start(config).ok());
+    QVERIFY(stocks.trade({TradeAction::Buy, 3, 0, 0, 100}).ok());
+    QVERIFY(stocks.confirmInitialAllocation().ok()); QVERIFY(stocks.nextMonth().ok());
+    QVERIFY(stocks.applyFlows({0, stocks.state().unitsOutstanding}).ok());
+    QCOMPARE(stocks.state().phase, Phase::Restructuring);
+    QCOMPARE(stocks.state().shareholderLiability, config.initialCapital);
+    QVERIFY(!stocks.finishMonth().ok()); // Долги нельзя забыть при возврате всех паёв.
+    auto id = stocks.state().portfolio.positions.front().id;
+    QVERIFY(stocks.trade({TradeAction::Sell, 0, id, 0, 100}).ok());
+    QVERIFY(stocks.finishMonth().ok());
+    QCOMPARE(stocks.state().phase, Phase::Finished);
+    QCOMPARE(stocks.state().shareholderLiability, Money(0));
+    QCOMPARE(stocks.state().history.size(), std::size_t(1));
+    QVERIFY(Simulation::validateState(stocks.exportState()).ok());
+
+    config = defaultConfig(); silenceMarket(config); config.initialCapital = 1200000;
+    Simulation deposit;
+    QVERIFY(deposit.start(config).ok());
+    QVERIFY(deposit.trade({TradeAction::OpenDeposit, 1, 0, 1200000, 0}).ok());
+    QVERIFY(deposit.confirmInitialAllocation().ok()); QVERIFY(deposit.nextMonth().ok());
+    QVERIFY(deposit.state().taxLiability > 0);
+    QVERIFY(deposit.applyFlows({10000, 0}).ok());
+    QCOMPARE(deposit.state().taxLiability, Money(0)); // Новые средства оплачивают налог.
+    QVERIFY(deposit.finishMonth().ok());
+    QVERIFY(Simulation::validateState(deposit.exportState()).ok());
+}
+
+void SimulationTests::invalidRestores()
+{
+    Simulation simulation;
+    QVERIFY(simulation.start(defaultConfig()).ok());
+    QVERIFY(simulation.trade({TradeAction::OpenDeposit, 1, 0, 100000, 0}).ok());
+    QVERIFY(simulation.confirmInitialAllocation().ok());
+    QVERIFY(simulation.nextMonth().ok());
+    const auto before = simulation.exportState();
+    auto reject = [&](GameState bad) {
+        QVERIFY(!simulation.restoreState(bad).ok());
+        QCOMPARE(simulation.state().month, before.month);
+        QCOMPARE(simulation.state().portfolio.cashRUB, before.portfolio.cashRUB);
+        QCOMPARE(simulation.exportState().randomEngineState, before.randomEngineState);
+    };
+    auto bad = before; bad.phase = Phase::ReadyForMonth; reject(bad);
+    bad = before; bad.market.usdRub = 0; reject(bad);
+    bad = before; bad.market.instruments[2].price = -1; reject(bad);
+    bad = before; bad.market.instruments[2].id = bad.market.instruments[0].id; reject(bad);
+    bad = before; bad.market.instruments[0].currency = static_cast<Currency>(55); reject(bad);
+    bad = before; bad.portfolio.positions[0].lockedRate = -1; reject(bad);
+    bad = before; bad.portfolio.positions[0].openMonth = 4; reject(bad);
+    bad = before; bad.nextPositionId = 1; reject(bad);
+    bad = before; bad.pending.report.profit++; reject(bad);
+    bad = before; bad.pending.flowsApplied = true; reject(bad);
+    bad = before; bad.returnIndex = 2; reject(bad);
+    bad = before; bad.randomEngineState += " junk"; reject(bad);
+    QVERIFY(simulation.applyFlows({}).ok()); QVERIFY(simulation.finishMonth().ok());
+    bad = simulation.exportState(); bad.history[0].month = 2;
+    QVERIFY(!Simulation::validateState(bad).ok());
+    bad = simulation.exportState(); bad.history[0].netProfit++;
+    QVERIFY(!Simulation::validateState(bad).ok());
+    bad = simulation.exportState(); bad.history[0].navEnd++;
+    QVERIFY(!Simulation::validateState(bad).ok());
+}
+
+void SimulationTests::overflowAndAtomicity()
+{
+    Money result = 0;
+    const auto min = std::numeric_limits<Money>::min();
+    const auto max = std::numeric_limits<Money>::max();
+    QVERIFY(!checkedSub(0, min, result));
+    QVERIFY(checkedSub(min, min, result)); QCOMPARE(result, Money(0));
+    QVERIFY(!floorUnitsFromMoney(max, 1).ok());
+    QVERIFY(!moneyFromUnits(max, max).ok());
+    QVERIFY(!mulDivRound(1, 2, -1).ok());
+    auto config = defaultConfig(); silenceMarket(config);
+    Simulation simulation; QVERIFY(simulation.start(config).ok());
+    QVERIFY(simulation.confirmInitialAllocation().ok()); QVERIFY(simulation.nextMonth().ok());
+    auto before = simulation.exportState();
+    QVERIFY(!simulation.applyFlows({max, 0}).ok());
+    QCOMPARE(simulation.state().portfolio.cashRUB, before.portfolio.cashRUB);
+    QCOMPARE(simulation.state().unitsOutstanding, before.unitsOutstanding);
+    config.instruments[2].price = max;
+    config.instruments[2].minChange = 1; config.instruments[2].maxChange = 1;
+    QVERIFY(simulation.start(config).ok()); QVERIFY(simulation.confirmInitialAllocation().ok());
+    before = simulation.exportState();
+    QVERIFY(!simulation.nextMonth().ok());
+    QCOMPARE(simulation.state().month, before.month);
+    QCOMPARE(simulation.exportState().randomEngineState, before.randomEngineState);
+    config = defaultConfig(); config.instruments[0].rateChangeMin = .5; config.instruments[0].rateChangeMax = -.5;
+    QVERIFY(!Simulation::validateConfig(config).ok());
+}
+
+void SimulationTests::automaticFlowsContract()
+{
+    auto config = defaultConfig(); config.flowMode = FlowMode::Automatic;
+    Simulation simulation; QVERIFY(simulation.start(config).ok());
+    QVERIFY(simulation.confirmInitialAllocation().ok()); QVERIFY(simulation.nextMonth().ok());
+    const auto proposal = simulation.suggestedFlows();
+    auto altered = proposal; ++altered.inflowRub;
+    QVERIFY(!simulation.applyFlows(altered).ok());
+    QCOMPARE(simulation.state().phase, Phase::AwaitingFlows);
+    QVERIFY(simulation.applyFlows(proposal).ok());
+    QVERIFY(!simulation.applyFlows(proposal).ok());
+}
+
+void SimulationTests::bondAndCurrencyIncome()
+{
+    auto config = defaultConfig(); silenceMarket(config); config.taxRate = 0;
+    auto& bond = config.instruments[5]; bond.annualRate = .12; bond.maturityMonth = 8;
+    Simulation simulation; QVERIFY(simulation.start(config).ok());
+    QVERIFY(simulation.confirmInitialAllocation().ok());
+    for (int month = 1; month <= 8; ++month) {
+        QVERIFY(simulation.nextMonth().ok());
+        const Money expected = month <= 2 ? 0 : 5000;
+        QCOMPARE(simulation.state().pending.report.profit, expected);
+        Money sum = 0;
+        for (const auto& row : simulation.state().pending.report.income) sum += row.total;
+        QCOMPARE(sum, expected);
+        QVERIFY(simulation.applyFlows({}).ok());
+        if (month == 2) {
+            const auto preview = simulation.previewTrade({TradeAction::Buy, 6, 0, 0, 5});
+            QVERIFY(preview.ok()); QCOMPARE(preview.value().cashDeltaRub, Money(-510000));
+            QVERIFY(simulation.trade({TradeAction::Buy, 6, 0, 0, 5}).ok());
+        }
+        QVERIFY(simulation.finishMonth().ok());
+        QVERIFY(Simulation::validateState(simulation.exportState()).ok());
+    }
+    QCOMPARE(simulation.state().portfolio.positions.size(), std::size_t(0));
+    QCOMPARE(simulation.statistics().totalNetProfit, Money(30000));
+    QCOMPARE(simulation.statistics().finalNav, config.initialCapital + 30000);
+
+    config = defaultConfig(); silenceMarket(config); config.taxRate = 0;
+    config.usdMinChange = .1; config.usdMaxChange = .1;
+    config.instruments[1].annualRate = .12; config.instruments[1].termMonths = 2;
+    QVERIFY(simulation.start(config).ok());
+    QVERIFY(simulation.trade({TradeAction::OpenDeposit, 2, 0, 10000, 0}).ok());
+    QVERIFY(simulation.confirmInitialAllocation().ok());
+    QVERIFY(simulation.nextMonth().ok());
+    QCOMPARE(simulation.state().pending.report.profit, Money(99900));
+    QVERIFY(simulation.applyFlows({}).ok()); QVERIFY(simulation.finishMonth().ok());
+    QVERIFY(simulation.nextMonth().ok());
+    QCOMPARE(simulation.state().pending.report.profit, Money(110880));
+    QVERIFY(simulation.applyFlows({}).ok()); QVERIFY(simulation.finishMonth().ok());
+    QCOMPARE(simulation.state().portfolio.positions.size(), std::size_t(0));
+    QCOMPARE(simulation.statistics().totalNetProfit, Money(210780));
 }
 
 void SimulationTests::windowGame()
