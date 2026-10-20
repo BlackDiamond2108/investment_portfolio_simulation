@@ -1,32 +1,41 @@
 cmake_minimum_required(VERSION 3.16)
-project(investment_portfolio_simulation LANGUAGES CXX)
+project(investment_portfolio_simulation VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+include(CTest)
+include(CheckCXXSourceCompiles)
+# Денежные произведения используют широкий целочисленный промежуточный результат.
+check_cxx_source_compiles("int main() { __int128 n = 1; return int(n); }" HAS_INT128)
+if(NOT HAS_INT128)
+    message(FATAL_ERROR "Use GCC or Clang with __int128 support (MinGW on Windows).")
+endif()
+option(ENABLE_SANITIZERS "Enable address and undefined-behavior checks" OFF)
+if(ENABLE_SANITIZERS)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
+add_compile_options(-Wall -Wextra)
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Test)
-
-add_library(portfolio_core
-    src/Portfolio.cpp
-    src/Simulation.cpp
-)
+add_library(portfolio_core src/Portfolio.cpp src/Simulation.cpp)
 target_include_directories(portfolio_core PUBLIC src)
-
 add_library(portfolio_storage src/GameStorage.cpp)
 target_link_libraries(portfolio_storage PUBLIC portfolio_core Qt6::Core)
-
-include(CTest)
-if(BUILD_TESTING)
-    add_executable(simulation_tests tests/SimulationTests.cpp)
-    target_link_libraries(simulation_tests PRIVATE portfolio_ui Qt6::Test)
-    set_target_properties(simulation_tests PROPERTIES AUTOMOC ON)
-    add_test(NAME simulation_tests COMMAND simulation_tests)
-    set_tests_properties(simulation_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
-endif()
-
 add_library(portfolio_ui src/MainWindow.cpp src/MainWindow.h src/MainWindow.ui)
 target_link_libraries(portfolio_ui PUBLIC portfolio_storage Qt6::Widgets)
 set_target_properties(portfolio_ui PROPERTIES AUTOMOC ON AUTOUIC ON)
 add_executable(portfolio_simulator src/main.cpp)
 target_link_libraries(portfolio_simulator PRIVATE portfolio_ui)
+
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_executable(simulation_tests tests/SimulationTests.cpp)
+    target_link_libraries(simulation_tests PRIVATE portfolio_ui Qt6::Test)
+    set_target_properties(simulation_tests PROPERTIES AUTOMOC ON)
+    add_test(NAME simulation_tests COMMAND simulation_tests)
+    set_tests_properties(simulation_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+endif()
+install(TARGETS portfolio_simulator RUNTIME DESTINATION bin)

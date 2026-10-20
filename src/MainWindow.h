@@ -1,12 +1,14 @@
 #pragma once
 
-#include "Simulation.h"
 #include "GameStorage.h"
+#include "Simulation.h"
 #include <QMainWindow>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
-namespace Ui { class MainWindow; }
+namespace Ui {
+class MainWindow;
+}
 class QTableWidget;
 class QComboBox;
 class QDoubleSpinBox;
@@ -23,6 +25,7 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
+
 protected:
     void closeEvent(QCloseEvent* event) override;
 private slots:
@@ -36,6 +39,7 @@ private slots:
     void onLoad();
     void refreshPreview();
     void refreshIncome();
+
 private:
     void buildPages();
     void setupConnections();
@@ -62,7 +66,8 @@ private:
     QDoubleSpinBox *usdMin_, *usdMax_, *eurMin_, *eurMax_, *sensitivity_, *noise_, *maxIn_, *maxOut_;
     QSpinBox* months_;
     QLineEdit* seed_;
-    QLabel *navLabel_, *cashLabel_, *debtLabel_, *returnLabel_, *tradePreview_, *tradeUnit_, *flowInfo_, *statsLabel_;
+    QLabel *navLabel_, *cashLabel_, *debtLabel_, *returnLabel_, *tradePreview_, *tradeUnit_, *flowInfo_,
+        *statsLabel_, *marketRates_;
     QPushButton *tradeButton_, *flowsButton_;
     QPlainTextEdit* journal_;
 };

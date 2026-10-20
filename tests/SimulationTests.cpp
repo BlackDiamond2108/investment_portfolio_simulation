@@ -13,6 +13,11 @@ JSON проверяется во всех фазах, включая продо�
 #include <QTableWidget>
 #include <QTabWidget>
 #include <QLabel>
+#include <QAction>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QTimer>
+#include <QLineEdit>
 #include <QJsonDocument>
 #include <QJsonObject>
 
@@ -91,6 +96,7 @@ private slots:
     void overflowAndAtomicity();
     void automaticFlowsContract();
     void bondAndCurrencyIncome();
+    void windowPersistence();
 };
 
 void SimulationTests::configBounds()
@@ -761,6 +767,13 @@ void SimulationTests::windowGame()
         MainWindow window;
         window.show();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto screenshot = [&](const QString& suffix) {
+            if (mode == 0 && !qEnvironmentVariableIsEmpty("PORTFOLIO_SCREENSHOT")) {
+                QApplication::processEvents();
+                QVERIFY(window.grab().save(qEnvironmentVariable("PORTFOLIO_SCREENSHOT") + suffix + ".png"));
+            }
+        };
+        screenshot("-settings");
         auto button = [&](const char* name) { return window.findChild<QPushButton*>(name); };
         auto* tabs = window.findChild<QTabWidget*>("tabs");
         auto* months = window.findChild<QSpinBox*>("months");
@@ -784,6 +797,7 @@ void SimulationTests::windowGame()
             button("nextButton")->click();
             QVERIFY(!button("nextButton")->isEnabled());
             QVERIFY(button("flowsButton")->isEnabled());
+            if (month == 1) screenshot("-operations");
             auto* inflow = window.findChild<QDoubleSpinBox*>("inflow");
             QCOMPARE(inflow->isEnabled(), mode == 0);
             if (mode == 0 && month == 1) inflow->setValue(1000);
@@ -801,6 +815,66 @@ void SimulationTests::windowGame()
         if (mode == 0 && !qEnvironmentVariableIsEmpty("PORTFOLIO_SCREENSHOT"))
             QVERIFY(window.grab().save(qEnvironmentVariable("PORTFOLIO_SCREENSHOT")));
     }
+}
+
+void SimulationTests::windowPersistence()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath("window.json");
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    MainWindow window;
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* create = window.findChild<QPushButton*>("newGameButton");
+    auto* trade = window.findChild<QPushButton*>("tradeButton");
+    auto* positions = window.findChild<QTableWidget*>("portfolioTable");
+    auto* save = window.findChild<QAction*>("actionSave");
+    auto* open = window.findChild<QAction*>("actionOpen");
+    QVERIFY(create && trade && positions && save && open);
+    create->click();
+    QVERIFY(window.isWindowModified());
+    QTimer dialogDriver;
+    dialogDriver.setInterval(10);
+    int files = 0, questions = 0;
+    QMessageBox::StandardButton response = QMessageBox::Cancel;
+    connect(&dialogDriver, &QTimer::timeout, &window, [&] {
+        if (auto* file = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+            if (!file->property("testPrepared").toBool()) {
+                file->setProperty("testPrepared", true);
+                file->setDirectory(directory.path()); file->selectFile(path);
+                ++files;
+            }
+            // QFileSystemModel грузится асинхронно: вводим путь после показа диалога,
+            // не сбрасывая каталог при каждом тике ожидания.
+            if (auto* name = file->findChild<QLineEdit*>("fileNameEdit")) name->setText(path);
+            QMetaObject::invokeMethod(file, "accept", Qt::QueuedConnection);
+        } else if (auto* question = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            ++questions;
+            if (auto* button = question->button(response)) button->click();
+            else question->reject();
+        }
+    });
+    dialogDriver.start();
+    save->trigger();
+    QCOMPARE(files, 1);
+    QVERIFY(!window.isWindowModified());
+    auto saved = GameStorage::load(path);
+    QVERIFY(saved.ok()); QCOMPARE(saved.value().phase, Phase::InitialAllocation);
+    trade->click();
+    QCOMPARE(positions->rowCount(), 1); QVERIFY(window.isWindowModified());
+    open->trigger(); // Отмена замены сохраняет текущую покупку.
+    QCOMPARE(questions, 1); QCOMPARE(positions->rowCount(), 1);
+    QVERIFY(window.isWindowModified());
+    response = QMessageBox::Discard;
+    open->trigger();
+    QCOMPARE(positions->rowCount(), 0); QVERIFY(!window.isWindowModified());
+    trade->click(); QVERIFY(window.isWindowModified());
+    response = QMessageBox::Cancel;
+    QVERIFY(!window.close()); QVERIFY(window.isVisible());
+    response = QMessageBox::Discard;
+    QVERIFY(window.close()); QVERIFY(!window.isVisible());
+    dialogDriver.stop();
 }
 
 QTEST_MAIN(SimulationTests)

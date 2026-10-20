@@ -398,6 +398,8 @@ Result<void> Simulation::trade(const TradeRequest& request)
     if (!applied.ok()) {
         return applied;
     }
+    const auto valid = validateState(copy);
+    if (!valid.ok()) return valid;
     state_ = std::move(copy);
     return Result<void>::success();
 }
@@ -705,6 +707,8 @@ Result<void> Simulation::nextMonth()
         return applied;
     }
     copy.randomEngineState = serializeRandomState(rngCopy);
+    const auto valid = validateState(copy);
+    if (!valid.ok()) return valid;
     state_ = std::move(copy);
     rng_ = rngCopy;
     return Result<void>::success();
@@ -796,6 +800,8 @@ Result<void> Simulation::applyFlows(const FlowRequest& request)
     if (!applied.ok()) {
         return applied;
     }
+    const auto valid = validateState(copy);
+    if (!valid.ok()) return valid;
     state_ = std::move(copy);
     return Result<void>::success();
 }
@@ -853,6 +859,8 @@ Result<void> Simulation::finishMonth()
     if (!applied.ok()) {
         return applied;
     }
+    const auto valid = validateState(copy);
+    if (!valid.ok()) return valid;
     state_ = std::move(copy);
     return Result<void>::success();
 }
@@ -873,6 +881,8 @@ GameStatistics Simulation::statistics() const
         stats.totalTax += report.tax;
         stats.totalInflow += report.acceptedInflow;
         stats.totalRedemption += report.redemptionValue;
+        stats.totalUnitsIssued += report.unitsIssued;
+        stats.totalUnitsRedeemed += report.unitsRedeemed;
     }
     return stats;
 }
@@ -1010,6 +1020,23 @@ Result<void> Simulation::validateState(const GameState& c)
         return bad("Капитал не совпадает с последним отчётом");
     if (!near(c.returnIndex, index) || !near(c.returnIndexPeak, peak) || !near(c.maxDrawdown, drawdown))
         return bad("Статистика не соответствует истории");
+    // Сводные суммы и движение паёв проверяются в широком типе до приведения.
+    __int128 gross = 0, net = 0, taxes = 0, inflow = 0, redemption = 0, issued = 0, redeemed = 0;
+    __int128 units = floorUnitsFromMoney(c.config.initialCapital, kInitialUnitPrice).value();
+    auto bounded = [](__int128 value) {
+        return value >= std::numeric_limits<Money>::min() && value <= std::numeric_limits<Money>::max();
+    };
+    auto accumulate = [&](const MonthReport& report) {
+        gross += report.profit; net += report.netProfit; taxes += report.tax;
+        inflow += report.acceptedInflow; redemption += report.redemptionValue;
+        issued += report.unitsIssued; redeemed += report.unitsRedeemed;
+        units += static_cast<__int128>(report.unitsIssued) - report.unitsRedeemed;
+        return bounded(gross) && bounded(net) && bounded(taxes) && bounded(inflow)
+            && bounded(redemption) && bounded(issued) && bounded(redeemed) && bounded(units) && units >= 0;
+    };
+    for (const auto& report : c.history) if (!accumulate(report)) return bad("Переполнение итогов или количества паёв");
+    if (pending && !accumulate(c.pending.report)) return bad("Переполнение итогов текущего месяца");
+    if (units != c.unitsOutstanding) return bad("Количество паёв не соответствует истории выпусков и возвратов");
     const auto rng = restoreRandomState(c.randomEngineState);
     if (!rng.ok()) return bad(rng.message);
     return Result<void>::success();

@@ -131,7 +131,11 @@ inline Result<Money> roundRateMoney(Money amount, double rate)
         || v < static_cast<long double>(std::numeric_limits<Money>::min())) {
         return Result<Money>::failure("overflow", "Переполнение при расчёте ставки");
     }
-    return Result<Money>::success(static_cast<Money>(std::llround(v)));
+    const long double rounded = std::round(v);
+    if (rounded > static_cast<long double>(std::numeric_limits<Money>::max())
+        || rounded < static_cast<long double>(std::numeric_limits<Money>::min()))
+        return Result<Money>::failure("overflow", "Переполнение округлённой суммы");
+    return Result<Money>::success(static_cast<Money>(rounded));
 }
 
 // Усечение вниз для паёв; проверка до преобразования int128 -> int64.
@@ -315,6 +319,8 @@ struct GameStatistics {
     Money totalTax = 0;
     Money totalInflow = 0;
     Money totalRedemption = 0;
+    Quantity totalUnitsIssued = 0;
+    Quantity totalUnitsRedeemed = 0;
     Quantity unitsOutstanding = 0;
     double cumulativeReturn = 0.0;
     double maxDrawdown = 0.0;
