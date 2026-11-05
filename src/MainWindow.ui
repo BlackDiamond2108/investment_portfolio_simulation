@@ -2,8 +2,8 @@
 <ui version="4.0">
  <class>MainWindow</class>
  <widget class="QMainWindow" name="MainWindow">
-  <property name="geometry"><rect><x>0</x><y>0</y><width>1240</width><height>860</height></rect></property>
-  <property name="windowTitle"><string>Инвестиционный фонд[*]</string></property>
+  <property name="geometry"><rect><x>0</x><y>0</y><width>1400</width><height>960</height></rect></property>
+  <property name="windowTitle"><string>Фонд · Инвестиционная симуляция[*]</string></property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QVBoxLayout" name="rootLayout">
     <property name="spacing"><number>12</number></property>
@@ -11,8 +11,14 @@
     <property name="topMargin"><number>20</number></property>
     <property name="rightMargin"><number>24</number></property>
     <property name="bottomMargin"><number>18</number></property>
-    <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Инвестиционный фонд</string></property></widget></item>
-    <item><widget class="QLabel" name="subtitleLabel"><property name="text"><string>Учебная симуляция · сформируйте портфель и управляйте им месяц за месяцем</string></property></widget></item>
+    <item><layout class="QHBoxLayout" name="brandLayout">
+     <item><widget class="QLabel" name="brandMark"><property name="minimumSize"><size><width>42</width><height>42</height></size></property><property name="maximumSize"><size><width>42</width><height>42</height></size></property><property name="styleSheet"><string>background: #ffdd2d; border-radius: 12px; font-size: 24px; font-weight: 700; color: #202124;</string></property><property name="text"><string>Ф</string></property><property name="alignment"><set>Qt::AlignCenter</set></property></widget></item>
+     <item><widget class="QLabel" name="titleLabel"><property name="text"><string>Фонд / Инвестиции</string></property></widget></item>
+     <item><spacer name="brandSpacer"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property></spacer></item>
+     <item><widget class="QLabel" name="subtitleLabel"><property name="text"><string>Учебный счёт · симуляция рынка</string></property></widget></item>
+     <item><widget class="QPushButton" name="saveButton"><property name="text"><string>Сохранить</string></property></widget></item>
+    </layout></item>
+    <item><widget class="QTabBar" name="navigationTabs"><property name="drawBase"><bool>false</bool></property><property name="expanding"><bool>false</bool></property><property name="usesScrollButtons"><bool>false</bool></property></widget></item>
     <item><layout class="QHBoxLayout" name="summaryLayout"/></item>
     <item><widget class="QLabel" name="phaseLabel"><property name="wordWrap"><bool>true</bool></property><property name="text"><string>Начните с параметров новой игры.</string></property></widget></item>
     <item><widget class="QTabWidget" name="tabs"/></item>

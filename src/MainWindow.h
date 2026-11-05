@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DashboardWidget.h"
 #include "GameStorage.h"
 #include "Simulation.h"
 #include <QMainWindow>
@@ -17,6 +18,8 @@ class QLineEdit;
 class QLabel;
 class QPushButton;
 class QPlainTextEdit;
+class QGridLayout;
+class QBoxLayout;
 QT_END_NAMESPACE
 
 // Одно окно: только ввод/отображение. Финансовые правила остаются в Simulation.
@@ -28,8 +31,11 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 private slots:
     void onNewGame();
+    void onExample();
+    void onDashboardStep();
     void onTrade();
     void onNextMonth();
     void onApplyFlows();
@@ -42,6 +48,9 @@ private slots:
 
 private:
     void buildPages();
+    void refreshMarketCards();
+    void openPosition(PositionId id);
+    void updateNavigation();
     void setupConnections();
     void refreshView();
     void refreshTradeChoices();
@@ -70,4 +79,7 @@ private:
         *statsLabel_, *marketRates_;
     QPushButton *tradeButton_, *flowsButton_;
     QPlainTextEdit* journal_;
+    DashboardWidget* dashboard_;
+    QGridLayout* marketCards_;
+    QBoxLayout* settingsColumns_ = nullptr;
 };

@@ -12,6 +12,7 @@ JSON проверяется во всех фазах, включая продо�
 #include <QSpinBox>
 #include <QTableWidget>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QLabel>
 #include <QAction>
 #include <QFileDialog>
@@ -97,6 +98,9 @@ private slots:
     void automaticFlowsContract();
     void bondAndCurrencyIncome();
     void windowPersistence();
+    void dashboardPresentation();
+    void dashboardExample();
+    void navigationAndDepositDetails();
 };
 
 void SimulationTests::configBounds()
@@ -807,7 +811,7 @@ void SimulationTests::windowGame()
             button("finishButton")->click();
             QCOMPARE(window.findChild<QTableWidget*>("historyTable")->rowCount(), month);
         }
-        QCOMPARE(tabs->currentIndex(), 3);
+        QCOMPARE(tabs->currentIndex(), 0);
         QVERIFY(!button("nextButton")->isEnabled());
         QVERIFY(!button("finishButton")->isEnabled());
         QVERIFY(window.findChild<QLabel*>("phaseLabel")->text().contains("Партия завершена"));
@@ -875,6 +879,149 @@ void SimulationTests::windowPersistence()
     response = QMessageBox::Discard;
     QVERIFY(window.close()); QVERIFY(!window.isVisible());
     dialogDriver.stop();
+}
+
+void SimulationTests::dashboardPresentation()
+{
+    Simulation simulation;
+    auto config = defaultConfig(); silenceMarket(config);
+    config.instruments[2].minChange = -.1;
+    config.instruments[2].maxChange = -.1;
+    QVERIFY(simulation.start(config).ok());
+    QVERIFY(simulation.trade({TradeAction::Buy, 3, 0, 0, 100}).ok());
+    DashboardWidget dashboard;
+    dashboard.resize(1150, 900); dashboard.show();
+    dashboard.setState(simulation.state(), simulation.statistics());
+    QCOMPARE(dashboard.displayedSeries().size(), qsizetype(1));
+    QCOMPARE(dashboard.displayedSeries().first().capital, config.initialCapital);
+    QCOMPARE(dashboard.displayedAllocation()[0].amount, Money(1000000));
+    QCOMPARE(dashboard.displayedAllocation()[4].amount, config.initialCapital - 1000000);
+    QVERIFY(simulation.confirmInitialAllocation().ok());
+    QVERIFY(simulation.nextMonth().ok());
+    dashboard.setState(simulation.state(), simulation.statistics());
+    QCOMPARE(dashboard.displayedSeries().size(), qsizetype(2));
+    QVERIFY(dashboard.displayedSeries().last().provisional);
+    QCOMPARE(dashboard.displayedSeries().last().capital, simulation.statistics().finalNav);
+    QCOMPARE(dashboard.displayedSeries().last().netProfit, Money(-100000));
+    Money assets = 0; for (const auto& segment : dashboard.displayedAllocation()) assets += segment.amount;
+    QCOMPARE(assets, Portfolio::assetsValue(simulation.state().portfolio, simulation.state().market).value());
+    auto* mode = dashboard.findChild<QComboBox*>("chartMode");
+    auto* period = dashboard.findChild<QComboBox*>("chartPeriod");
+    QVERIFY(mode && period); mode->setCurrentIndex(1); period->setCurrentIndex(1);
+    auto* chart = dashboard.findChild<QWidget*>("performanceChart"); QVERIFY(chart);
+    QVERIFY(!chart->grab().isNull());
+    QSignalSpy selected(&dashboard, &DashboardWidget::monthRequested);
+    QTest::mouseMove(chart, QPoint(chart->width()-80, chart->height()/2));
+    QTest::mouseClick(chart, Qt::LeftButton, Qt::NoModifier, QPoint(chart->width()-80, chart->height()/2));
+    QCOMPARE(selected.size(), 1); QCOMPARE(selected.first().first().toInt(), 1);
+    QVERIFY(simulation.applyFlows({100000, 0}).ok()); QVERIFY(simulation.finishMonth().ok());
+    dashboard.setState(simulation.state(), simulation.statistics());
+    QCOMPARE(dashboard.displayedSeries().size(), qsizetype(2));
+    QVERIFY(!dashboard.displayedSeries().last().provisional);
+    // Поступление меняет капитал, но не нарисованную прибыль месяца.
+    QCOMPARE(dashboard.displayedSeries().last().netProfit, Money(-100000));
+    dashboard.setState(simulation.state(), simulation.statistics());
+    QCOMPARE(dashboard.displayedSeries().size(), qsizetype(2));
+    QVERIFY(simulation.start(config).ok());
+    dashboard.setState(simulation.state(), simulation.statistics());
+    QCOMPARE(dashboard.displayedSeries().size(), qsizetype(1));
+    QCOMPARE(dashboard.displayedAllocation()[0].amount, Money(0));
+    dashboard.setState(GameState{}, GameStatistics{});
+    QVERIFY(dashboard.displayedSeries().isEmpty());
+    QVERIFY(!dashboard.grab().isNull());
+}
+
+void SimulationTests::dashboardExample()
+{
+    QLocale::setDefault(QLocale(QLocale::Russian, QLocale::Russia));
+    MainWindow window;
+    window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* tabs = window.findChild<QTabWidget*>("tabs");
+    auto* dashboard = window.findChild<DashboardWidget*>("dashboard");
+    QVERIFY(dashboard && tabs); QCOMPARE(tabs->currentIndex(), 0);
+    auto* example = window.findChild<QPushButton*>("exampleButton"); QVERIFY(example);
+    QTest::mouseClick(example, Qt::LeftButton);
+    QCOMPARE(dashboard->displayedSeries().size(), qsizetype(7));
+    QCOMPARE(dashboard->displayedSeries().last().month, 6);
+    QVERIFY(!dashboard->displayedSeries().last().provisional);
+    QCOMPARE(window.findChild<QTableWidget*>("historyTable")->rowCount(), 6);
+    auto* step = window.findChild<QPushButton*>("dashboardStepButton"); QVERIFY(step);
+    QVERIFY(step->text().contains("7"));
+    auto capture = [&](const QString& suffix) {
+        if (!qEnvironmentVariableIsEmpty("PORTFOLIO_DASHBOARD_SCREENSHOT")) {
+            QApplication::processEvents(); QTest::qWait(450);
+            QVERIFY(window.grab().save(qEnvironmentVariable("PORTFOLIO_DASHBOARD_SCREENSHOT") + suffix + ".png"));
+        }
+    };
+    capture("");
+    QTest::mouseClick(step, Qt::LeftButton);
+    QCOMPARE(tabs->currentIndex(), 0);
+    QCOMPARE(dashboard->displayedSeries().size(), qsizetype(8));
+    QVERIFY(dashboard->displayedSeries().last().provisional);
+    QTest::mouseClick(step, Qt::LeftButton); QCOMPARE(tabs->currentIndex(), 2);
+    window.findChild<QPushButton*>("flowsButton")->click();
+    tabs->setCurrentIndex(0); step->click();
+    QCOMPARE(dashboard->displayedSeries().size(), qsizetype(8));
+    QVERIFY(!dashboard->displayedSeries().last().provisional);
+    tabs->setCurrentIndex(1); capture("-market");
+    tabs->setCurrentIndex(0);
+    window.resize(1040,720); capture("-compact");
+    QVERIFY(window.width() <= 1040);
+}
+
+void SimulationTests::navigationAndDepositDetails()
+{
+    MainWindow window;
+    window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto* tabs = window.findChild<QTabWidget*>("tabs");
+    auto* navigation = window.findChild<QTabBar*>("navigationTabs");
+    QVERIFY(tabs && navigation);
+    const int navigationY = navigation->mapTo(&window, QPoint()).y();
+    window.findChild<QPushButton*>("exampleButton")->click();
+    auto capture = [&](const QString& suffix) {
+        if (!qEnvironmentVariableIsEmpty("PORTFOLIO_UI_REFINEMENT_SCREENSHOT")) {
+            QApplication::processEvents();
+            QVERIFY(window.grab().save(qEnvironmentVariable("PORTFOLIO_UI_REFINEMENT_SCREENSHOT") + suffix + ".png"));
+        }
+    };
+    for (int index = 0; index < navigation->count(); ++index) {
+        QTest::mouseClick(navigation, Qt::LeftButton, Qt::NoModifier, navigation->tabRect(index).center());
+        QApplication::processEvents();
+        QCOMPARE(tabs->currentIndex(), index);
+        QCOMPARE(navigation->mapTo(&window, QPoint()).y(), navigationY);
+        if (index == 3) capture("-history");
+    }
+    capture("-settings");
+    window.resize(1040, 720);
+    QApplication::processEvents();
+    for (const char* name : {"usd", "eur", "usdMin", "usdMax", "maxIn", "maxOut"}) {
+        auto* field = window.findChild<QDoubleSpinBox*>(name);
+        QVERIFY(field);
+        QVERIFY(field->findChild<QLineEdit*>()->width() > 50);
+        const int right = field->mapTo(&window, QPoint(field->width(), 0)).x();
+        QVERIFY2(right < window.width(), name);
+    }
+    capture("-compact");
+    // Условия вклада доступны, но просмотр не меняет позиции и капитал.
+    tabs->setCurrentIndex(0);
+    auto* dashboard = window.findChild<DashboardWidget*>("dashboard");
+    QVERIFY(dashboard);
+    const Money capital = dashboard->displayedSeries().last().capital;
+    auto* deposit = window.findChild<QPushButton*>("position_5");
+    QVERIFY(deposit && deposit->isEnabled());
+    QString explanation;
+    QTimer::singleShot(0, &window, [&] {
+        if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            explanation = message->text();
+            message->accept();
+        }
+    });
+    deposit->click();
+    QVERIFY(explanation.contains("месяца 12"));
+    QVERIFY(explanation.contains("Досрочное закрытие"));
+    QVERIFY(!explanation.contains("%6"));
+    QCOMPARE(dashboard->displayedSeries().last().capital, capital);
+    QCOMPARE(window.findChild<QTableWidget*>("portfolioTable")->rowCount(), 5);
 }
 
 QTEST_MAIN(SimulationTests)

@@ -58,7 +58,7 @@ QDoubleSpinBox* number(const QString& name, double min, double max, int digits =
     w->setDecimals(digits);
     w->setRange(min, max);
     w->setGroupSeparatorShown(true);
-    w->setMinimumWidth(150);
+    w->setMinimumWidth(110);
     w->setKeyboardTracking(false);
     return w;
 }
@@ -80,7 +80,9 @@ QTableWidget* table(const QString& name, const QStringList& headers)
 void cell(QTableWidget* w, int row, int column, const QString& value)
 {
     auto* item = new QTableWidgetItem(value);
-    if (column > 1)
+    if (w->objectName() == "historyTable" && column > 1)
+        item->setTextAlignment(Qt::AlignCenter);
+    else if (column > 1)
         item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
     w->setItem(row, column, item);
 }
@@ -107,35 +109,64 @@ MainWindow::MainWindow(QWidget* parent)
     , ui(std::make_unique<Ui::MainWindow>())
 {
     ui->setupUi(this);
-    setMinimumSize(1000, 760);
-    ui->phaseLabel->setMinimumHeight(70);
-    ui->tabs->tabBar()->setUsesScrollButtons(false);
+    setMinimumSize(1040, 720);
+    resize(1400, 960);
+    ui->phaseLabel->setMinimumHeight(58);
+    ui->tabs->tabBar()->hide();
     ui->tabs->tabBar()->setElideMode(Qt::ElideNone);
     setStyleSheet(R"(
-        QMainWindow { background: #eef3f5; }
-        QWidget { font-family: "DejaVu Sans"; font-size: 12px; color: #18333e; }
-        QLabel#titleLabel { font-size: 26px; font-weight: 700; }
-        QLabel#subtitleLabel, QLabel[hint="true"] { color: #526d78; }
-        QLabel[card="true"] { background: white; padding: 16px; border: 1px solid #d6e3e7; border-radius: 8px; font-size: 15px; }
-        QLabel#phaseLabel { background: #dceeea; color: #16574d; padding: 12px; border-radius: 6px; }
-        QTabWidget::pane { background: white; border: 1px solid #d6e3e7; border-radius: 6px; }
-        QTabBar::tab { padding: 11px 18px; background: #e3ecef; border: none; }
-        QTabBar::tab:selected { background: white; color: #087d6c; font-weight: bold; }
-        QPushButton { background: #087d6c; color: white; border: none; border-radius: 5px; padding: 10px 14px; }
-        QPushButton:hover { background: #096555; }
-        QPushButton:disabled { background: #d9e2e5; color: #6e8088; }
-        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { padding: 6px; background: white; border: 1px solid #b9cdd4; border-radius: 4px; }
-        QTableWidget { background: white; alternate-background-color: #f4f8f9; border: 1px solid #dce6e9; selection-background-color: #cfeae5; selection-color: #153f38; }
-        QHeaderView::section { background: #edf4f6; padding: 9px; border: none; color: #49636e; }
-        QGroupBox { font-weight: bold; border: 1px solid #d6e3e7; border-radius: 6px; margin-top: 12px; padding: 15px; }
-        QGroupBox::title { subcontrol-origin: margin; left: 12px; }
-        QPlainTextEdit { background: #f8fafb; border: 1px solid #dce6e9; }
+        QMainWindow, QWidget#centralwidget { background: #f5f6f7; }
+        QWidget { font-family: "DejaVu Sans"; font-size: 13px; color: #202124; }
+        QLabel { background: transparent; }
+        QLabel#titleLabel { font-size: 22px; font-weight: 700; }
+        QLabel#subtitleLabel, QLabel[hint="true"], QLabel[role="caption"] { color: #80858f; }
+        QLabel[role="small"] { font-size: 11px; color: #80858f; }
+        QLabel[role="eyebrow"] { font-size: 11px; color: #80858f; font-weight: 600; }
+        QLabel[role="balance"] { font-size: 36px; font-weight: 700; color: #202124; }
+        QLabel[role="metric"] { font-size: 19px; font-weight: 600; }
+        QLabel[role="section"] { font-size: 16px; font-weight: 600; }
+        QLabel[role="assetName"] { font-size: 13px; font-weight: 600; }
+        QLabel[card="true"] { background: white; padding: 16px; border-radius: 14px; font-size: 14px; }
+        QFrame[panel="true"] { background: white; border-radius: 16px; }
+        QFrame[assetRow="true"] { background: #f7f8fa; border-radius: 12px; }
+        QLabel#phaseLabel { background: #fff7d2; color: #756125; padding: 10px 16px; border-radius: 10px; }
+        QTabWidget::pane { border: none; background: transparent; }
+        QTabBar::tab { padding: 14px 22px; background: transparent; color: #80858f; border-bottom: 3px solid transparent; }
+        QTabBar::tab:selected { color: #202124; border-bottom: 3px solid #ffdd2d; font-weight: 600; }
+        QTabBar::tab:hover { color: #202124; }
+        QPushButton { background: #ffdd2d; color: #202124; border: none; border-radius: 10px; padding: 12px 18px; font-weight: 600; }
+        QPushButton:hover { background: #f3cf14; }
+        QPushButton:pressed { background: #eac500; }
+        QPushButton[secondary="true"] { background: #edf0f4; color: #356bb5; }
+        QPushButton[secondary="true"]:hover { background: #e3e8ee; }
+        QPushButton:disabled { background: #eff0f2; color: #adb1b8; }
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { padding: 9px; background: #f1f3f6; border: 1px solid transparent; border-radius: 8px; selection-background-color: #ffe981; }
+        QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0; height: 0; border: none; }
+        QSpinBox QLineEdit, QDoubleSpinBox QLineEdit { padding: 0; border: none; border-radius: 0; background: transparent; }
+        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 1px solid #e7c326; }
+        QComboBox::drop-down { border: none; width: 24px; }
+        QComboBox QAbstractItemView { background: white; selection-background-color: #fff5bc; selection-color: #202124; }
+        QTableWidget { background: white; alternate-background-color: #fafbfc; border: none; selection-background-color: #fff4b5; selection-color: #202124; border-radius: 12px; }
+        QHeaderView::section { background: white; padding: 12px; border: none; border-bottom: 1px solid #eceef1; color: #80858f; font-weight: 400; }
+        QGroupBox { background: white; font-weight: 600; border: 1px solid #eceef1; border-radius: 14px; margin-top: 18px; padding: 18px; }
+        QGroupBox::title { subcontrol-origin: margin; left: 16px; padding: 0 4px; }
+        QPlainTextEdit { background: #f8f9fa; border: 1px solid #eceef1; border-radius: 8px; }
+        QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
+        QScrollBar:vertical { background: transparent; width: 8px; margin: 0; }
+        QScrollBar::handle:vertical { background: #d5d8de; min-height: 28px; border-radius: 4px; }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+        QToolTip { background: #25272b; color: white; border: none; padding: 10px; }
+        QMenuBar, QStatusBar { background: #f5f6f7; color: #80858f; }
     )");
     buildPages();
+    for (int index = 0; index < ui->tabs->count(); ++index)
+        ui->navigationTabs->addTab(ui->tabs->tabText(index));
     setupConnections();
     fillSettings(Simulation::makeDefaultConfig());
     refreshView();
-    ui->tabs->setCurrentIndex(4);
+    ui->tabs->setCurrentIndex(0);
+    updateNavigation();
 }
 MainWindow::~MainWindow() = default;
 
@@ -154,25 +185,52 @@ void MainWindow::buildPages()
     debtLabel_ = card("debtLabel");
     returnLabel_ = card("returnLabel");
     QVBoxLayout* layout;
-    page(ui->tabs, "Портфель", layout);
-    layout->addWidget(hint("Вложения можно менять до старта и после расчёта потоков. Срочные вклады "
-                           "возвращаются автоматически по окончании срока."));
+    page(ui->tabs, "Обзор", layout);
+    layout->setContentsMargins(0, 16, 0, 0);
+    auto* overviewScroll = new QScrollArea;
+    overviewScroll->setObjectName("overviewScroll");
+    overviewScroll->setWidgetResizable(true);
+    auto* overview = new QWidget;
+    auto* overviewLayout = new QVBoxLayout(overview);
+    overviewLayout->setContentsMargins(0, 0, 12, 12);
+    overviewLayout->setSpacing(16);
+    dashboard_ = new DashboardWidget;
+    overviewLayout->addWidget(dashboard_);
+    auto* detailsButton = new QPushButton("Подробная таблица позиций");
+    detailsButton->setProperty("secondary", true);
+    detailsButton->setCheckable(true);
+    overviewLayout->addWidget(detailsButton);
     portfolioTable_ = table("portfolioTable",
         { "Позиция", "Инструмент", "Тип", "Валюта", "Количество / сумма", "Ставка", "Погашение",
             "Стоимость, RUB" });
-    layout->addWidget(portfolioTable_);
-    layout->addWidget(hint("Выберите позицию двойным щелчком, чтобы перейти к её продаже. Доход по всем "
-                           "позициям, включая погашенные, находится в истории."));
+    portfolioTable_->setMinimumHeight(220);
+    portfolioTable_->hide();
+    overviewLayout->addWidget(portfolioTable_);
+    connect(detailsButton, &QPushButton::toggled, portfolioTable_, &QWidget::setVisible);
+    overviewScroll->setWidget(overview);
+    layout->addWidget(overviewScroll);
 
     page(ui->tabs, "Рынок", layout);
-    layout->addWidget(hint("Учебные котировки, не реальные биржевые данные. Цена металла указана за грамм. "
-                           "Ставка вклада действует для нового договора."));
+    layout->addWidget(
+        hint("Выберите актив для своего фонда. Все цены и условия моделируются в этой партии."));
     marketRates_ = hint("");
     layout->addWidget(marketRates_);
+    auto* marketScroll = new QScrollArea;
+    marketScroll->setWidgetResizable(true);
+    auto* marketContent = new QWidget;
+    auto* marketLayout = new QVBoxLayout(marketContent);
+    marketLayout->setContentsMargins(0, 0, 8, 8);
+    marketCards_ = new QGridLayout;
+    marketCards_->setSpacing(16);
+    marketLayout->addLayout(marketCards_);
     marketTable_ = table("marketTable",
         { "Инструмент", "Тип", "Валюта", "Цена / номинал", "Годовая ставка", "Срок / погашение",
             "Изменение за месяц", "Доступен" });
-    layout->addWidget(marketTable_);
+    marketTable_->setMinimumHeight(230);
+    marketLayout->addWidget(marketTable_);
+    marketLayout->addStretch();
+    marketScroll->setWidget(marketContent);
+    layout->addWidget(marketScroll);
 
     page(ui->tabs, "Операции", layout);
     auto* tradeBox = new QGroupBox("Покупка, продажа и открытие вклада");
@@ -234,7 +292,8 @@ void MainWindow::buildPages()
     auto* settings = new QVBoxLayout(content);
     scroll->setWidget(content);
     layout->addWidget(scroll);
-    auto* columns = new QHBoxLayout;
+    settingsColumns_ = new QBoxLayout(QBoxLayout::LeftToRight);
+    auto* columns = settingsColumns_;
     auto* general = new QGroupBox("Параметры фонда");
     auto* g = new QFormLayout(general);
     months_ = new QSpinBox;
@@ -263,25 +322,43 @@ void MainWindow::buildPages()
     usdMax_ = number("usdMax", -99.99, 100);
     eurMin_ = number("eurMin", -99.99, 100);
     eurMax_ = number("eurMax", -99.99, 100);
-    auto range = [](QDoubleSpinBox* a, QDoubleSpinBox* b) {
+    // Два поля снабжены собственными подписями: диапазон и пара разных величин
+    // больше не обозначаются одним неоднозначным многоточием.
+    auto pair = [](const QString& firstTitle, QDoubleSpinBox* first, const QString& secondTitle,
+                    QDoubleSpinBox* second) {
         auto* w = new QWidget;
-        auto* h = new QHBoxLayout(w);
-        h->setContentsMargins(0, 0, 0, 0);
-        h->addWidget(a);
-        h->addWidget(new QLabel("…"));
-        h->addWidget(b);
+        auto* row = new QHBoxLayout(w);
+        row->setContentsMargins(0, 0, 0, 0);
+        row->setSpacing(12);
+        auto add = [&](const QString& title, QDoubleSpinBox* input) {
+            auto* column = new QVBoxLayout;
+            column->setSpacing(4);
+            auto* caption = hint(title);
+            column->addWidget(caption);
+            column->addWidget(input);
+            input->setAccessibleName(title);
+            row->addLayout(column, 1);
+        };
+        add(firstTitle, first);
+        add(secondTitle, second);
         return w;
     };
-    x->addRow("USD / EUR, RUB", range(usd_, eur_));
-    x->addRow("Изменение USD, %", range(usdMin_, usdMax_));
-    x->addRow("Изменение EUR, %", range(eurMin_, eurMax_));
+    x->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    g->setRowWrapPolicy(QFormLayout::WrapLongRows);
+    x->addRow("Курсы валют, RUB", pair("1 USD", usd_, "1 EUR", eur_));
+    x->addRow("Изменение USD за месяц, %", pair("От", usdMin_, "До", usdMax_));
+    x->addRow("Изменение EUR за месяц, %", pair("От", eurMin_, "До", eurMax_));
     sensitivity_ = number("sensitivity", 0, 100);
     noise_ = number("noise", 0, 100);
     maxIn_ = number("maxIn", 0, 100);
     maxOut_ = number("maxOut", 0, 100);
-    x->addRow("Чувствительность / шум, %", range(sensitivity_, noise_));
-    sensitivity_->setToolTip("Коэффициент k, без процентов. Шум справа — в процентах.");
-    x->addRow("Макс. приток / отток, %", range(maxIn_, maxOut_));
+    x->addRow("Чувствительность спроса (k)", sensitivity_);
+    sensitivity_->setToolTip("Коэффициент реакции на доходность: при k = 2 доходность 1% даёт спрос 2% до "
+                             "случайного разброса и ограничений.");
+    x->addRow("Случайный разброс спроса, %", noise_);
+    noise_->setToolTip(
+        "Случайная прибавка к спросу от минус до плюс указанного процента. При 0 случайного разброса нет.");
+    x->addRow("Ограничения за месяц", pair("Макс. приток, %", maxIn_, "Макс. отток, %", maxOut_));
     columns->addWidget(fx);
     settings->addLayout(columns);
     settings->addWidget(hint("Начальный портфель собирается после создания игры. Изменение этих полей не "
@@ -321,6 +398,25 @@ void MainWindow::buildPages()
 
 void MainWindow::setupConnections()
 {
+    connect(ui->navigationTabs, &QTabBar::currentChanged, ui->tabs, &QTabWidget::setCurrentIndex);
+    connect(ui->tabs, &QTabWidget::currentChanged, this, [this](int index) {
+        ui->navigationTabs->setCurrentIndex(index);
+        updateNavigation();
+    });
+    connect(ui->saveButton, &QPushButton::clicked, this, &MainWindow::onSave);
+    connect(dashboard_, &DashboardWidget::exampleRequested, this, &MainWindow::onExample);
+    connect(dashboard_, &DashboardWidget::nextStepRequested, this, &MainWindow::onDashboardStep);
+    connect(dashboard_, &DashboardWidget::marketRequested, this, [this] { ui->tabs->setCurrentIndex(1); });
+    connect(dashboard_, &DashboardWidget::positionRequested, this, &MainWindow::openPosition);
+    connect(dashboard_, &DashboardWidget::monthRequested, this, [this](int month) {
+        ui->tabs->setCurrentIndex(3);
+        for (int row = 0; row < historyTable_->rowCount(); ++row)
+            if (historyTable_->item(row, 0)->text().toInt() == month) {
+                historyTable_->selectRow(row);
+                historyTable_->scrollToItem(historyTable_->item(row, 0));
+                break;
+            }
+    });
     connect(ui->initialButton, &QPushButton::clicked, this, &MainWindow::onConfirmInitialAllocation);
     connect(ui->nextButton, &QPushButton::clicked, this, &MainWindow::onNextMonth);
     connect(ui->finishButton, &QPushButton::clicked, this, &MainWindow::onFinishMonth);
@@ -341,11 +437,7 @@ void MainWindow::setupConnections()
     connect(ui->actionOpen, &QAction::triggered, this, &MainWindow::onLoad);
     connect(ui->actionExit, &QAction::triggered, this, &QWidget::close);
     connect(portfolioTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-        auto id = portfolioTable_->item(row, 0)->data(Qt::UserRole);
-        tradeAction_->setCurrentIndex(1);
-        refreshTradeChoices();
-        tradeTarget_->setCurrentIndex(tradeTarget_->findData(id));
-        ui->tabs->setCurrentIndex(2);
+        openPosition(portfolioTable_->item(row, 0)->data(Qt::UserRole).toLongLong());
     });
 }
 
@@ -736,6 +828,10 @@ void MainWindow::refreshView()
     redeem_->setEnabled(inflow_->isEnabled());
     flowsButton_->setEnabled(await);
     refreshTradeChoices();
+    dashboard_->setState(s, stats);
+    refreshMarketCards();
+    ui->saveButton->setEnabled(s.started);
+    updateNavigation();
     setWindowModified(dirty_);
     statusBar()->showMessage(filePath_.isEmpty() ? "Партия ещё не сохранена" : filePath_);
 }
@@ -825,7 +921,10 @@ void MainWindow::onApplyFlows()
 }
 void MainWindow::onFinishMonth()
 {
-    applyResult(simulation_.finishMonth());
+    const auto result = simulation_.finishMonth();
+    applyResult(result);
+    if (result.ok())
+        ui->tabs->setCurrentIndex(0);
 }
 bool MainWindow::confirmDiscard()
 {
@@ -900,4 +999,196 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->accept();
     else
         event->ignore();
+}
+
+void MainWindow::updateNavigation()
+{
+    const bool overview = ui->tabs->currentIndex() == 0;
+    for (auto* w : { navLabel_, cashLabel_, debtLabel_, returnLabel_ })
+        w->setVisible(!overview);
+    ui->phaseLabel->setVisible(!overview);
+    ui->initialButton->setVisible(!overview && ui->initialButton->isEnabled());
+    ui->nextButton->setVisible(!overview && ui->nextButton->isEnabled());
+    ui->finishButton->setVisible(!overview && ui->finishButton->isEnabled());
+}
+
+void MainWindow::onDashboardStep()
+{
+    const auto& state = simulation_.state();
+    if (!state.started || state.phase == Phase::Finished) {
+        ui->tabs->setCurrentIndex(4);
+        return;
+    }
+    switch (state.phase) {
+    case Phase::InitialAllocation:
+        onConfirmInitialAllocation();
+        break;
+    case Phase::ReadyForMonth:
+        onNextMonth();
+        // Показываем изменение графика; потоки подтверждаются отдельной командой.
+        ui->tabs->setCurrentIndex(0);
+        break;
+    case Phase::AwaitingFlows:
+        ui->tabs->setCurrentIndex(2);
+        break;
+    case Phase::Restructuring:
+        onFinishMonth();
+        break;
+    case Phase::Finished:
+        break;
+    }
+}
+
+void MainWindow::onExample()
+{
+    if (!confirmDiscard())
+        return;
+    Simulation example;
+    auto config = Simulation::makeDefaultConfig();
+    config.flowMode = FlowMode::Automatic;
+    config.seed = 42;
+    auto result = example.start(config);
+    if (!result.ok()) {
+        showError(result.message);
+        return;
+    }
+    // Демонстрация использует обычные команды движка, без готовых графиков и вымышленных отчётов.
+    const std::vector<TradeRequest> trades { { TradeAction::Buy, 3, 0, 0, 800 },
+        { TradeAction::Buy, 4, 0, 0, 1000 }, { TradeAction::Buy, 5, 0, 0, 10000 },
+        { TradeAction::Buy, 6, 0, 0, 100 }, { TradeAction::OpenDeposit, 1, 0, 10000000, 0 },
+        { TradeAction::OpenDeposit, 2, 0, 50000, 0 } };
+    for (const auto& trade : trades) {
+        result = example.trade(trade);
+        if (!result.ok()) {
+            showError(result.message);
+            return;
+        }
+    }
+    result = example.confirmInitialAllocation();
+    for (int month = 0; month < 6 && result.ok(); ++month) {
+        result = example.nextMonth();
+        if (result.ok())
+            result = example.applyFlows(example.suggestedFlows());
+        if (result.ok())
+            result = example.finishMonth();
+    }
+    if (!result.ok()) {
+        showError(result.message);
+        return;
+    }
+    result = simulation_.restoreState(example.exportState());
+    if (!result.ok()) {
+        showError(result.message);
+        return;
+    }
+    filePath_.clear();
+    fillSettings(config);
+    inflow_->setValue(0);
+    redeem_->setValue(0);
+    applyResult(result);
+    ui->tabs->setCurrentIndex(0);
+    statusBar()->showMessage(
+        "Открыт пример: 6 месяцев рассчитаны обычным движком. Продолжайте игру или создайте свою.");
+}
+
+void MainWindow::refreshMarketCards()
+{
+    while (auto* item = marketCards_->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    const auto& s = simulation_.state();
+    if (!s.started) {
+        marketCards_->addWidget(
+            hint("Создайте свою игру или откройте пример на вкладке «Обзор», чтобы увидеть рынок."), 0, 0);
+        return;
+    }
+    int index = 0;
+    for (const auto& i : s.market.instruments) {
+        auto* panel = new QFrame;
+        panel->setProperty("panel", true);
+        auto* box = new QVBoxLayout(panel);
+        box->setContentsMargins(20, 18, 20, 18);
+        box->setSpacing(12);
+        auto* heading = new QLabel(text(i.name));
+        heading->setProperty("role", "section");
+        box->addWidget(heading);
+        box->addWidget(hint(kind(i.kind) + "  ·  " + currency(i.currency)));
+        auto* quote = new QLabel(i.kind == InstrumentKind::Deposit
+                ? percent(i.annualRate) + " годовых"
+                : money(i.kind == InstrumentKind::Bond ? i.faceValue + i.accruedCoupon : i.price) + " "
+                    + currency(i.currency));
+        quote->setProperty("role", "metric");
+        box->addWidget(quote);
+        QString detail;
+        if (i.kind == InstrumentKind::Deposit)
+            detail = QString("Срок %1 мес. · ставка фиксируется при открытии").arg(i.termMonths);
+        else if (i.kind == InstrumentKind::Bond)
+            detail
+                = QString("Купон %1 · погашение в месяце %2").arg(percent(i.annualRate)).arg(i.maturityMonth);
+        else
+            detail = "Изменение цены за месяц: " + percent(i.minChange) + " … " + percent(i.maxChange);
+        box->addWidget(hint(detail));
+        auto* buy = new QPushButton(i.kind == InstrumentKind::Deposit ? "Открыть вклад" : "Купить");
+        buy->setObjectName("buyInstrument_" + QString::number(i.id));
+        buy->setEnabled(i.tradable
+            && (s.phase == Phase::InitialAllocation
+                || (s.phase == Phase::Restructuring && s.month < s.config.monthCount))
+            && !s.taxLiability && !s.shareholderLiability);
+        if (!buy->isEnabled())
+            buy->setToolTip(
+                "Сделки доступны при начальном распределении и реструктуризации, если нет долга.");
+        connect(
+            buy, &QPushButton::clicked, this, [this, id = i.id, deposit = i.kind == InstrumentKind::Deposit] {
+                tradeAction_->setCurrentIndex(deposit ? 2 : 0);
+                refreshTradeChoices();
+                tradeTarget_->setCurrentIndex(tradeTarget_->findData(QVariant::fromValue<qlonglong>(id)));
+                ui->tabs->setCurrentIndex(2);
+            });
+        box->addStretch();
+        box->addWidget(buy);
+        marketCards_->addWidget(panel, index / 3, index % 3);
+        ++index;
+    }
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event)
+{
+    QMainWindow::resizeEvent(event);
+    if (settingsColumns_)
+        settingsColumns_->setDirection(width() < 1200 ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+}
+
+void MainWindow::openPosition(PositionId id)
+{
+    const auto& state = simulation_.state();
+    const auto it = std::find_if(state.portfolio.positions.begin(), state.portfolio.positions.end(),
+        [id](const Position& p) { return p.id == id; });
+    if (it == state.portfolio.positions.end())
+        return;
+    const auto* instrument = Portfolio::findInstrument(state.market, it->instrumentId);
+    if (!instrument)
+        return;
+    if (instrument->kind == InstrumentKind::Deposit) {
+        QString description
+            = QString("%1\n\nСумма вклада: %2 %3\nЗафиксированная ставка: %4\n"
+                      "Открыт в месяце %5. Автоматическое закрытие — в конце месяца %6.\n"
+                      "До закрытия: %7 мес.\n\nПри расчёте месяца %6 сумма вклада и накопленные проценты "
+                      "автоматически вернутся в свободные деньги фонда в RUB по курсу этого месяца.\n\n"
+                      "Досрочное закрытие срочного вклада в этой симуляции не предусмотрено.")
+                  .arg(text(instrument->name), money(it->principal), currency(instrument->currency),
+                      percent(it->lockedRate))
+                  .arg(it->openMonth)
+                  .arg(it->maturityMonth)
+                  .arg(std::max(0, it->maturityMonth - state.month));
+        if (it->maturityMonth > state.config.monthCount)
+            description += "\n\nСрок вклада заканчивается после завершения игры. В итогах он учитывается по "
+                           "стоимости с начисленными процентами.";
+        QMessageBox::information(this, "Когда закроется вклад", description);
+        return;
+    }
+    tradeAction_->setCurrentIndex(1);
+    refreshTradeChoices();
+    tradeTarget_->setCurrentIndex(tradeTarget_->findData(QVariant::fromValue<qlonglong>(id)));
+    ui->tabs->setCurrentIndex(2);
 }
