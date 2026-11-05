@@ -116,3 +116,5 @@ ctest --test-dir build-sanitize --output-on-failure
 [Карта проекта и взаимодействие классов](docs/project-plan.md) ·
 [Формулы и допущения](docs/simulation-rules.md) ·
 [Правила работы вдвоём](AGENTS.md).
+
+[Документация проекта (PDF)](docs/documentation.pdf) · [Исходник LaTeX](docs/documentation.tex).
